@@ -162,11 +162,6 @@ static inline void set_inode_attr(struct inode *inode,
 				  struct kernfs_iattrs *attrs)
 {
 	struct super_block *sb = inode->i_sb;
-	inode->i_uid = iattr->ia_uid;
-	inode->i_gid = iattr->ia_gid;
-	inode->i_atime = timespec64_trunc(iattr->ia_atime, sb->s_time_gran);
-	inode->i_mtime = timespec64_trunc(iattr->ia_mtime, sb->s_time_gran);
-	inode->i_ctime = timespec64_trunc(iattr->ia_ctime, sb->s_time_gran);
 	inode->i_uid = attrs->ia_uid;
 	inode->i_gid = attrs->ia_gid;
 	inode->i_atime = timespec64_trunc(attrs->ia_atime, sb->s_time_gran);
