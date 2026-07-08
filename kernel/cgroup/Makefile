@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
-obj-y := cgroup.o namespace.o cgroup-v1.o legacy_freezer.o
+obj-y := cgroup.o namespace.o cgroup-v1.o
 
 ifdef CONFIG_INLINE_OPTIMIZATION
 ccflags-y += -mllvm -inline-threshold=15000
