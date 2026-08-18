@@ -1,0 +1,168 @@
+name: Build evergey Kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - lineage-23.2
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build kernel
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: lineage-23.2
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            bc \
+            bison \
+            build-essential \
+            ccache \
+            clang \
+            curl \
+            flex \
+            git \
+            libelf-dev \
+            libncurses5-dev \
+            libssl-dev \
+            lld \
+            llvm \
+            python3 \
+            rsync \
+            unzip \
+            wget \
+            xz-utils \
+            zip
+
+      - name: Show source information
+        run: |
+          echo "===== Git ====="
+          git branch --show-current
+          git rev-parse HEAD
+
+          echo
+          echo "===== Host ====="
+          uname -a
+
+          echo
+          echo "===== Clang ====="
+          clang --version
+
+          echo
+          echo "===== LLVM ====="
+          llvm-config --version
+
+      - name: Inspect kernel build files
+        run: |
+          echo "===== build scripts ====="
+          find . -maxdepth 2 -type f \
+            \( -name "build.sh" -o -name "build.config*" \) \
+            -print | sort
+
+          echo
+          echo "===== defconfig ====="
+          find arch/arm64/configs -maxdepth 1 -type f \
+            -name "*defconfig" \
+            -print | sort
+
+      - name: Prepare build environment
+        run: |
+          mkdir -p "$HOME/toolchains"
+          mkdir -p out
+
+          export PATH="/usr/lib/llvm-14/bin:$PATH"
+
+          echo "PATH=$PATH" >> "$GITHUB_ENV"
+
+      - name: Try project build script
+        run: |
+          if [ -f "./build.sh" ]; then
+            chmod +x ./build.sh
+            ./build.sh
+          else
+            echo "build.sh not found."
+            exit 1
+          fi
+
+      - name: Collect build outputs
+        if: always()
+        run: |
+          mkdir -p artifacts
+
+          echo "===== Image ====="
+          find . -type f \
+            \( -name "Image" -o -name "Image.gz" \) \
+            -print | tee image_files.txt
+
+          echo
+          echo "===== DTB ====="
+          find . -type f \
+            -name "*.dtb" \
+            -print | tee dtb_files.txt
+
+          echo
+          echo "===== Modules ====="
+          find . -type f \
+            -name "*.ko" \
+            -print | tee module_files.txt
+
+          echo
+          echo "===== Copy outputs ====="
+
+          if [ -s image_files.txt ]; then
+            while IFS= read -r f; do
+              mkdir -p "artifacts/$(dirname "$f")"
+              cp -f "$f" "artifacts/$f"
+            done < image_files.txt
+          fi
+
+          if [ -s dtb_files.txt ]; then
+            while IFS= read -r f; do
+              mkdir -p "artifacts/$(dirname "$f")"
+              cp -f "$f" "artifacts/$f"
+            done < dtb_files.txt
+          fi
+
+          if [ -s module_files.txt ]; then
+            while IFS= read -r f; do
+              mkdir -p "artifacts/$(dirname "$f")"
+              cp -f "$f" "artifacts/$f"
+            done < module_files.txt
+          fi
+
+          echo
+          echo "===== Artifact tree ====="
+          find artifacts -type f | sort
+
+      - name: Create kernel archive
+        if: always()
+        run: |
+          if [ -d artifacts ] && [ "$(find artifacts -type f | wc -l)" -gt 0 ]; then
+            cd artifacts
+            zip -r ../evergey-kernel-lineage-23.2.zip .
+          else
+            echo "No kernel artifacts found."
+            exit 1
+          fi
+
+      - name: Upload kernel artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evergey-kernel-lineage-23.2
+          path: evergey-kernel-lineage-23.2.zip
+          if-no-files-found: error
+          retention-days: 14
