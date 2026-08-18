@@ -5,7 +5,7 @@ set -o pipefail
 SECONDS=0
 DATE=$(date '+%Y%m%d-%H%M')
 
-CURRENT_DIR=$(pwd)
+CURRENT_DIR="$(pwd)"
 
 # ============================================================
 # Device
@@ -47,25 +47,26 @@ for arg in "$@"; do
             rm -f out/.ksu_applied
             INCLUDE_KSU=true
             ;;
+        *)
+            echo "Warning: unknown option: $arg"
+            ;;
     esac
 done
 
 # ============================================================
-# Information
+# Build information
 # ============================================================
 
 echo
 echo "========================================"
 echo "Aqua / evergey Kernel Build"
 echo "========================================"
-
 echo "Device       : $DEVICE"
 echo "Defconfig    : $DEFCONFIG"
 echo "Build jobs   : $BUILD_JOBS"
 echo "KernelSU     : $INCLUDE_KSU"
 echo "Output       : out"
 echo "ZIP          : $ZIPNAME"
-
 echo "========================================"
 
 # ============================================================
@@ -73,7 +74,9 @@ echo "========================================"
 # ============================================================
 
 echo
-echo "Cleaning generated files..."
+echo "========================================"
+echo "Cleaning generated files"
+echo "========================================"
 
 rm -rf out/arch/arm64/boot
 
@@ -94,7 +97,7 @@ rm -f modules.order
 rm -rf scripts/kconfig/.tmp*
 
 if [ "$CLEAN_BUILD" = true ]; then
-    echo "Performing complete clean build..."
+    echo "Complete clean build requested."
     rm -rf out
 fi
 
@@ -104,47 +107,81 @@ mkdir -p out
 # Check defconfig
 # ============================================================
 
+echo
+echo "========================================"
+echo "Checking defconfig"
+echo "========================================"
+
 if [ ! -f "arch/arm64/configs/$DEFCONFIG" ]; then
-    echo
-    echo "ERROR:"
-    echo "arch/arm64/configs/$DEFCONFIG not found!"
+    echo "ERROR: arch/arm64/configs/$DEFCONFIG not found!"
     exit 1
 fi
 
+echo "Found:"
+ls -lh "arch/arm64/configs/$DEFCONFIG"
+
 # ============================================================
-# Toolchain
+# Download / prepare toolchain
 # ============================================================
 
-if [ ! -d "$TC_DIR" ]; then
+echo
+echo "========================================"
+echo "Preparing ZyCromerZ Clang 22"
+echo "========================================"
 
-    echo
-    echo "========================================"
-    echo "Downloading ZyCromerZ Clang 22"
-    echo "========================================"
+if [ ! -x "$TC_DIR/bin/clang" ]; then
+
+    echo "Clang 22 not found."
+    echo "Downloading toolchain..."
 
     mkdir -p "$TC_DIR"
 
     cd "$TC_DIR" || exit 1
 
+    TOOLCHAIN_ARCHIVE="Clang-22.0.0git-20250928.tar.gz"
+
     wget -q --show-progress \
-        https://github.com/ZyCromerZ/Clang/releases/download/22.0.0git-20250928-release/Clang-22.0.0git-20250928.tar.gz
+        "https://github.com/ZyCromerZ/Clang/releases/download/22.0.0git-20250928-release/${TOOLCHAIN_ARCHIVE}"
 
     if [ $? -ne 0 ]; then
-        echo "ERROR: Failed to download Clang."
+        echo "ERROR: Failed to download Clang 22."
         exit 1
     fi
 
-    tar -xf Clang-22.0.0git-20250928.tar.gz
+    tar -xf "$TOOLCHAIN_ARCHIVE"
 
-    rm -f Clang-22.0.0git-20250928.tar.gz
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to extract Clang 22."
+        exit 1
+    fi
+
+    rm -f "$TOOLCHAIN_ARCHIVE"
 
     cd "$CURRENT_DIR" || exit 1
 fi
 
 export PATH="$TC_DIR/bin:$PATH"
 
+# ============================================================
+# Compiler environment
+# ============================================================
+
+export ARCH=arm64
+export SUBARCH=arm64
+
 export CC=clang
 export LD=ld.lld
+
+# HOST tools must use native x86_64 compiler
+export HOSTCC=gcc
+export HOSTCXX=g++
+
+export LLVM=1
+export LLVM_IAS=1
+
+# ============================================================
+# Show compiler
+# ============================================================
 
 echo
 echo "========================================"
@@ -160,13 +197,23 @@ echo "ld.lld:"
 command -v ld.lld
 ld.lld --version
 
+echo
+echo "gcc:"
+command -v gcc
+gcc --version | head -1
+
+echo
+echo "g++:"
+command -v g++
+g++ --version | head -1
+
 # ============================================================
 # KernelSU Next + SUSFS
 # ============================================================
 
 if [ -f out/.ksu_applied ]; then
     echo
-    echo "KernelSU Next already applied."
+    echo "KernelSU Next has already been applied."
 fi
 
 if [[ "$INCLUDE_KSU" = true && ! -f out/.ksu_applied ]]; then
@@ -181,13 +228,13 @@ if [[ "$INCLUDE_KSU" = true && ! -f out/.ksu_applied ]]; then
         | bash
 
     if [ $? -ne 0 ]; then
-        echo "ERROR: KernelSU setup failed!"
+        echo "ERROR: KernelSU setup failed."
         exit 1
     fi
 
     git clone \
         --depth=1 \
-        https://github.com/JackA1ltman/NonGKI_Kernel_Build_2nd.git \
+        "https://github.com/JackA1ltman/NonGKI_Kernel_Build_2nd.git" \
         SU_patch
 
     if [ $? -ne 0 ]; then
@@ -197,45 +244,70 @@ if [[ "$INCLUDE_KSU" = true && ! -f out/.ksu_applied ]]; then
 
     for patch in SU_patch/Patches/*sh; do
         if [ -f "$patch" ]; then
-            echo "Applying: $patch"
+            echo
+            echo "Applying patch script:"
+            echo "$patch"
+
             bash "$patch"
 
             if [ $? -ne 0 ]; then
-                echo "ERROR: Patch failed: $patch"
+                echo "ERROR: Patch script failed:"
+                echo "$patch"
                 exit 1
             fi
         fi
     done
 
-    if [ -f SU_patch/Patches/Patch/susfs_patch_to_4.14.patch ]; then
+    if [ -f "SU_patch/Patches/Patch/susfs_patch_to_4.14.patch" ]; then
+
+        echo
+        echo "Applying SUSFS 4.14 patch..."
 
         patch -p1 \
-            < SU_patch/Patches/Patch/susfs_patch_to_4.14.patch
+            < "SU_patch/Patches/Patch/susfs_patch_to_4.14.patch"
 
         if [ $? -ne 0 ]; then
-            echo "ERROR: SUSFS 4.14 patch failed!"
+            echo "ERROR: SUSFS 4.14 patch failed."
             exit 1
         fi
+    fi
 
+    echo
+    echo "Downloading Everpal KSU patches..."
+
+    wget -q \
+        "https://raw.githubusercontent.com/Addster09/EverpalPatches/main/KSUPatches/defconfig-Enable-KSU-and-SUSFS.patch"
+
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to download KSU defconfig patch."
+        exit 1
     fi
 
     wget -q \
-        https://raw.githubusercontent.com/Addster09/EverpalPatches/main/KSUPatches/defconfig-Enable-KSU-and-SUSFS.patch
+        "https://raw.githubusercontent.com/Addster09/EverpalPatches/main/KSUPatches/susfs_patch_taskmmu.patch"
 
-    wget -q \
-        https://raw.githubusercontent.com/Addster09/EverpalPatches/main/KSUPatches/susfs_patch_taskmmu.patch
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to download SUSFS taskmmu patch."
+        exit 1
+    fi
+
+    echo
+    echo "Applying KSU/SUSFS defconfig patch..."
 
     patch -p1 < defconfig-Enable-KSU-and-SUSFS.patch
 
     if [ $? -ne 0 ]; then
-        echo "ERROR: KSU defconfig patch failed!"
+        echo "ERROR: KSU defconfig patch failed."
         exit 1
     fi
+
+    echo
+    echo "Applying taskmmu SUSFS patch..."
 
     patch -p1 < susfs_patch_taskmmu.patch
 
     if [ $? -ne 0 ]; then
-        echo "ERROR: taskmmu SUSFS patch failed!"
+        echo "ERROR: taskmmu SUSFS patch failed."
         exit 1
     fi
 
@@ -251,7 +323,7 @@ if [[ "$INCLUDE_KSU" = true && ! -f out/.ksu_applied ]]; then
 fi
 
 # ============================================================
-# Defconfig
+# Generate defconfig
 # ============================================================
 
 echo
@@ -262,15 +334,19 @@ echo "========================================"
 make \
     O=out \
     ARCH=arm64 \
+    HOSTCC=gcc \
+    HOSTCXX=g++ \
     "$DEFCONFIG"
 
-if [ $? -ne 0 ]; then
-    echo "ERROR: defconfig failed!"
-    exit 1
+DEFCONFIG_RESULT=$?
+
+if [ $DEFCONFIG_RESULT -ne 0 ]; then
+    echo "ERROR: defconfig failed."
+    exit $DEFCONFIG_RESULT
 fi
 
 # ============================================================
-# Clang 22 compatibility
+# Compiler compatibility
 # ============================================================
 
 echo
@@ -278,21 +354,30 @@ echo "========================================"
 echo "Adjusting compiler compatibility"
 echo "========================================"
 
-# Linux 4.14 compiler check is incompatible
-# with modern Clang versions.
+# Linux 4.14's old compiler test can reject modern Clang.
+# Disable the old strong stack protector option.
 
-sed -i \
-    's/^CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/' \
-    out/.config
+if grep -q '^CONFIG_CC_STACKPROTECTOR_STRONG=y' out/.config; then
+
+    echo "Disabling CONFIG_CC_STACKPROTECTOR_STRONG..."
+
+    sed -i \
+        's/^CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/' \
+        out/.config
+fi
 
 make \
     O=out \
     ARCH=arm64 \
+    HOSTCC=gcc \
+    HOSTCXX=g++ \
     olddefconfig
 
-if [ $? -ne 0 ]; then
-    echo "ERROR: olddefconfig failed!"
-    exit 1
+OLDDEFCONFIG_RESULT=$?
+
+if [ $OLDDEFCONFIG_RESULT -ne 0 ]; then
+    echo "ERROR: olddefconfig failed."
+    exit $OLDDEFCONFIG_RESULT
 fi
 
 echo
@@ -301,7 +386,26 @@ echo "Stack protector configuration:"
 grep "CONFIG_CC_STACKPROTECTOR" out/.config || true
 
 # ============================================================
-# Build
+# Build configuration summary
+# ============================================================
+
+echo
+echo "========================================"
+echo "Final build configuration"
+echo "========================================"
+
+echo "ARCH       = $ARCH"
+echo "SUBARCH    = $SUBARCH"
+echo "CC         = $CC"
+echo "HOSTCC     = $HOSTCC"
+echo "HOSTCXX    = $HOSTCXX"
+echo "LD         = $LD"
+echo "LLVM       = $LLVM"
+echo "LLVM_IAS   = $LLVM_IAS"
+echo "BUILD_JOBS = $BUILD_JOBS"
+
+# ============================================================
+# Kernel compilation
 # ============================================================
 
 echo
@@ -318,6 +422,8 @@ make \
     O=out \
     ARCH=arm64 \
     CC=clang \
+    HOSTCC=gcc \
+    HOSTCXX=g++ \
     LLVM=1 \
     LLVM_IAS=1 \
     KCFLAGS="-Wno-error=default-const-init-var-unsafe" \
@@ -333,11 +439,20 @@ if [ $BUILD_RESULT -ne 0 ]; then
     echo "COMPILATION FAILED"
     echo "========================================"
 
+    echo "Exit code: $BUILD_RESULT"
+
+    echo
+    echo "Last generated files:"
+    find out/arch/arm64/boot \
+        -maxdepth 2 \
+        -type f \
+        -print 2>/dev/null || true
+
     exit $BUILD_RESULT
 fi
 
 # ============================================================
-# Verify Image
+# Verify Image.gz
 # ============================================================
 
 IMAGE="out/arch/arm64/boot/Image.gz"
@@ -352,12 +467,14 @@ if [ ! -f "$IMAGE" ]; then
     exit 1
 fi
 
+echo "Kernel image:"
 ls -lh "$IMAGE"
 
+echo
 file "$IMAGE"
 
 # ============================================================
-# DTB
+# Show DTBs
 # ============================================================
 
 echo
@@ -368,7 +485,8 @@ echo "========================================"
 find out/arch/arm64/boot \
     -type f \
     -name "*.dtb" \
-    -print
+    -print \
+    | sort
 
 # ============================================================
 # AnyKernel3
@@ -383,18 +501,18 @@ rm -rf AnyKernel3
 
 git clone \
     --depth=1 \
-    https://github.com/Addster09/AnyKernel3 \
+    "https://github.com/Addster09/AnyKernel3" \
     AnyKernel3
 
 if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to clone AnyKernel3!"
+    echo "ERROR: Failed to clone AnyKernel3."
     exit 1
 fi
 
 cp "$IMAGE" AnyKernel3/Image.gz
 
 if [ ! -f AnyKernel3/Image.gz ]; then
-    echo "ERROR: Failed to copy Image.gz!"
+    echo "ERROR: Failed to copy Image.gz to AnyKernel3."
     exit 1
 fi
 
@@ -409,26 +527,43 @@ fi
         '*placeholder'
 )
 
-if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to create kernel ZIP!"
-    exit 1
+ZIP_RESULT=$?
+
+if [ $ZIP_RESULT -ne 0 ]; then
+    echo "ERROR: Failed to create kernel ZIP."
+    exit $ZIP_RESULT
 fi
 
 # ============================================================
 # Verify ZIP
 # ============================================================
 
+echo
+echo "========================================"
+echo "Checking kernel ZIP"
+echo "========================================"
+
 if [ ! -f "$ZIPNAME" ]; then
-    echo "ERROR: $ZIPNAME was not created!"
+    echo "ERROR: $ZIPNAME was not created."
     exit 1
 fi
 
 ZIP_SIZE=$(du -h "$ZIPNAME" | cut -f1)
 
+echo "ZIP:"
+ls -lh "$ZIPNAME"
+
+echo
+echo "ZIP size: $ZIP_SIZE"
+
+# ============================================================
+# Cleanup
+# ============================================================
+
 rm -rf AnyKernel3
 
 # ============================================================
-# Finish
+# Finished
 # ============================================================
 
 echo
@@ -444,11 +579,8 @@ echo "AnyKernel3:"
 echo "$ZIPNAME"
 
 echo
-echo "ZIP size:"
-echo "$ZIP_SIZE"
-
-echo
-echo "Completed in $((SECONDS / 60)) minute(s) and $((SECONDS % 60)) second(s)."
+echo "Completed in:"
+echo "$((SECONDS / 60)) minute(s) and $((SECONDS % 60)) second(s)"
 
 echo "========================================"
 
