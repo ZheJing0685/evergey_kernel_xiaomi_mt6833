@@ -2,6 +2,24 @@ name: Build evergey Kernel
 
 on:
   workflow_dispatch:
+    inputs:
+      with_ksu:
+        description: "Build with KernelSU Next + SUSFS"
+        required: true
+        default: false
+        type: boolean
+
+      jobs:
+        description: "Kernel compile jobs"
+        required: true
+        default: "2"
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "3"
+          - "4"
+
   push:
     branches:
       - lineage-23.2
@@ -11,16 +29,52 @@ permissions:
 
 jobs:
   build:
-    name: Build kernel
+    name: Build MT6833 Kernel
     runs-on: ubuntu-22.04
 
+    env:
+      ARCH: arm64
+      SUBARCH: arm64
+      LLVM: 1
+      LLVM_IAS: 1
+      KBUILD_BUILD_USER: github-actions
+      KBUILD_BUILD_HOST: github-actions
+
     steps:
+
+      # ============================================================
+      # Checkout
+      # ============================================================
+
       - name: Checkout source
         uses: actions/checkout@v4
         with:
           ref: lineage-23.2
           submodules: recursive
           fetch-depth: 1
+
+      # ============================================================
+      # Free runner disk space
+      # ============================================================
+
+      - name: Free disk space
+        run: |
+          echo "===== Disk before cleanup ====="
+          df -h
+
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+
+          sudo apt-get clean
+
+          echo
+          echo "===== Disk after cleanup ====="
+          df -h
+
+      # ============================================================
+      # Dependencies
+      # ============================================================
 
       - name: Install dependencies
         run: |
@@ -31,15 +85,11 @@ jobs:
             bison \
             build-essential \
             ccache \
-            clang \
             curl \
             flex \
             git \
             libelf-dev \
-            libncurses5-dev \
             libssl-dev \
-            lld \
-            llvm \
             python3 \
             rsync \
             unzip \
@@ -47,122 +97,302 @@ jobs:
             xz-utils \
             zip
 
-      - name: Show source information
+      # ============================================================
+      # System information
+      # ============================================================
+
+      - name: Show build environment
         run: |
-          echo "===== Git ====="
+          echo "========================================"
+          echo "CPU"
+          echo "========================================"
+          nproc
+          lscpu
+
+          echo
+          echo "========================================"
+          echo "MEMORY"
+          echo "========================================"
+          free -h
+
+          echo
+          echo "========================================"
+          echo "DISK"
+          echo "========================================"
+          df -h
+
+          echo
+          echo "========================================"
+          echo "GIT"
+          echo "========================================"
           git branch --show-current
           git rev-parse HEAD
 
           echo
-          echo "===== Host ====="
-          uname -a
+          echo "========================================"
+          echo "KERNEL VERSION"
+          echo "========================================"
+          make kernelversion
+
+      # ============================================================
+      # Inspect source tree
+      # ============================================================
+
+      - name: Inspect kernel source
+        run: |
+          echo "========================================"
+          echo "Kernel Makefile"
+          echo "========================================"
+          head -40 Makefile
 
           echo
-          echo "===== Clang ====="
-          clang --version
+          echo "========================================"
+          echo "everpal defconfig"
+          echo "========================================"
 
-          echo
-          echo "===== LLVM ====="
-          llvm-config --version
-
-      - name: Inspect kernel build files
-        run: |
-          echo "===== build scripts ====="
-          find . -maxdepth 2 -type f \
-            \( -name "build.sh" -o -name "build.config*" \) \
-            -print | sort
-
-          echo
-          echo "===== defconfig ====="
-          find arch/arm64/configs -maxdepth 1 -type f \
-            -name "*defconfig" \
-            -print | sort
-
-      - name: Prepare build environment
-        run: |
-          mkdir -p "$HOME/toolchains"
-          mkdir -p out
-
-          export PATH="/usr/lib/llvm-14/bin:$PATH"
-
-          echo "PATH=$PATH" >> "$GITHUB_ENV"
-
-      - name: Try project build script
-        run: |
-          if [ -f "./build.sh" ]; then
-            chmod +x ./build.sh
-            ./build.sh
+          if [ -f "arch/arm64/configs/everpal_defconfig" ]; then
+            echo "FOUND:"
+            ls -lh arch/arm64/configs/everpal_defconfig
           else
-            echo "build.sh not found."
+            echo "ERROR: everpal_defconfig not found!"
             exit 1
           fi
 
-      - name: Collect build outputs
-        if: always()
+          echo
+          echo "========================================"
+          echo "Build scripts"
+          echo "========================================"
+
+          find . -maxdepth 3 -type f \
+            \( \
+              -name "build.sh" \
+              -o -name "build.config*" \
+            \) \
+            -print | sort
+
+      # ============================================================
+      # Show build.sh
+      # ============================================================
+
+      - name: Inspect build.sh
         run: |
+          if [ ! -f "./build.sh" ]; then
+            echo "ERROR: build.sh not found!"
+            exit 1
+          fi
+
+          echo "========================================"
+          echo "build.sh"
+          echo "========================================"
+
+          sed -n '1,260p' build.sh
+
+      # ============================================================
+      # Prepare output directory
+      # ============================================================
+
+      - name: Prepare build directory
+        run: |
+          mkdir -p out
           mkdir -p artifacts
 
-          echo "===== Image ====="
-          find . -type f \
-            \( -name "Image" -o -name "Image.gz" \) \
-            -print | tee image_files.txt
+          echo "ARCH=$ARCH"
+          echo "SUBARCH=$SUBARCH"
+          echo "LLVM=$LLVM"
+          echo "LLVM_IAS=$LLVM_IAS"
+
+      # ============================================================
+      # ccache
+      # ============================================================
+
+      - name: Configure ccache
+        run: |
+          ccache --version
+
+          ccache --max-size=5G
+          ccache --set-config=compression=true
+
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+
+          ccache -s
+
+      # ============================================================
+      # Restore ccache
+      # ============================================================
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: kernel-ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            kernel-ccache-${{ runner.os }}-${{ github.ref_name }}-
+            kernel-ccache-${{ runner.os }}-
+
+      # ============================================================
+      # Build
+      # ============================================================
+
+      - name: Build kernel
+        env:
+          BUILD_JOBS: ${{ github.event.inputs.jobs || '2' }}
+          WITH_KSU: ${{ github.event.inputs.with_ksu || 'false' }}
+        run: |
+          set -o pipefail
+
+          chmod +x build.sh
+
+          echo "========================================"
+          echo "BUILD CONFIGURATION"
+          echo "========================================"
+
+          echo "ARCH       = $ARCH"
+          echo "SUBARCH    = $SUBARCH"
+          echo "LLVM       = $LLVM"
+          echo "LLVM_IAS   = $LLVM_IAS"
+          echo "BUILD_JOBS = $BUILD_JOBS"
+          echo "WITH_KSU   = $WITH_KSU"
 
           echo
-          echo "===== DTB ====="
-          find . -type f \
-            -name "*.dtb" \
-            -print | tee dtb_files.txt
+          echo "========================================"
+          echo "START BUILD"
+          echo "========================================"
 
-          echo
-          echo "===== Modules ====="
-          find . -type f \
-            -name "*.ko" \
-            -print | tee module_files.txt
+          if [ "$WITH_KSU" = "true" ]; then
+            echo "Building with KernelSU Next + SUSFS..."
 
-          echo
-          echo "===== Copy outputs ====="
+            ./build.sh --with-ksu 2>&1 | tee build.log
+          else
+            echo "Building normal kernel..."
 
-          if [ -s image_files.txt ]; then
-            while IFS= read -r f; do
-              mkdir -p "artifacts/$(dirname "$f")"
-              cp -f "$f" "artifacts/$f"
-            done < image_files.txt
+            ./build.sh 2>&1 | tee build.log
           fi
 
-          if [ -s dtb_files.txt ]; then
-            while IFS= read -r f; do
-              mkdir -p "artifacts/$(dirname "$f")"
-              cp -f "$f" "artifacts/$f"
-            done < dtb_files.txt
-          fi
+      # ============================================================
+      # Check build result
+      # ============================================================
 
-          if [ -s module_files.txt ]; then
-            while IFS= read -r f; do
-              mkdir -p "artifacts/$(dirname "$f")"
-              cp -f "$f" "artifacts/$f"
-            done < module_files.txt
-          fi
-
-          echo
-          echo "===== Artifact tree ====="
-          find artifacts -type f | sort
-
-      - name: Create kernel archive
+      - name: Check build result
         if: always()
         run: |
-          if [ -d artifacts ] && [ "$(find artifacts -type f | wc -l)" -gt 0 ]; then
-            cd artifacts
-            zip -r ../evergey-kernel-lineage-23.2.zip .
+          echo "========================================"
+          echo "BUILD LOG - LAST 300 LINES"
+          echo "========================================"
+
+          if [ -f build.log ]; then
+            tail -300 build.log
           else
-            echo "No kernel artifacts found."
+            echo "build.log not found."
+          fi
+
+          echo
+          echo "========================================"
+          echo "KERNEL IMAGE"
+          echo "========================================"
+
+          find . -type f \
+            \( \
+              -name "Image" \
+              -o -name "Image.gz" \
+              -o -name "Image.gz-dtb" \
+              -o -name "Image-dtb" \
+            \) \
+            -not -path "./.git/*" \
+            -print
+
+          echo
+          echo "========================================"
+          echo "DTB"
+          echo "========================================"
+
+          find . -type f \
+            -name "*.dtb" \
+            -not -path "./.git/*" \
+            -print
+
+          echo
+          echo "========================================"
+          echo "KERNEL MODULES"
+          echo "========================================"
+
+          find . -type f \
+            -name "*.ko" \
+            -not -path "./.git/*" \
+            -print
+
+          echo
+          echo "========================================"
+          echo "ANYKERNEL ZIP"
+          echo "========================================"
+
+          find . -maxdepth 2 -type f \
+            -name "*.zip" \
+            -print
+
+          echo
+          echo "========================================"
+          echo "CCACHE"
+          echo "========================================"
+
+          ccache -s || true
+
+      # ============================================================
+      # Find generated AnyKernel package
+      # ============================================================
+
+      - name: Collect AnyKernel package
+        if: success()
+        run: |
+          set -e
+
+          mkdir -p artifacts
+
+          echo "Searching for kernel ZIP..."
+
+          ZIP_FILE=$(find . \
+            -maxdepth 2 \
+            -type f \
+            -name "*.zip" \
+            -not -path "./.git/*" \
+            -not -path "./artifacts/*" \
+            | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: Kernel ZIP not found!"
             exit 1
           fi
 
-      - name: Upload kernel artifact
-        if: always()
+          echo "Found:"
+          echo "$ZIP_FILE"
+
+          cp "$ZIP_FILE" artifacts/
+
+          echo
+          echo "Artifacts:"
+          ls -lh artifacts/
+
+      # ============================================================
+      # Upload kernel
+      # ============================================================
+
+      - name: Upload kernel ZIP
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: evergey-kernel-lineage-23.2
-          path: evergey-kernel-lineage-23.2.zip
+          path: artifacts/*.zip
           if-no-files-found: error
+          retention-days: 14
+
+      # ============================================================
+      # Upload build log
+      # ============================================================
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evergey-build-log
+          path: build.log
+          if-no-files-found: warn
           retention-days: 14
