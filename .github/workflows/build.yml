@@ -1,4 +1,4 @@
-name: Build evergey Kernel
+name: Build Camellia Kernel
 
 on:
   workflow_dispatch:
@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   build:
-    name: Build MT6833 Kernel
+    name: Build Camellia Kernel
     runs-on: ubuntu-22.04
 
     env:
@@ -48,7 +48,7 @@ jobs:
       # ============================================================
 
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: lineage-23.2
           submodules: recursive
@@ -66,12 +66,15 @@ jobs:
             bc \
             bison \
             build-essential \
+            binutils-aarch64-linux-gnu \
+            gcc-aarch64-linux-gnu \
             ccache \
             curl \
             flex \
             git \
             libelf-dev \
             libssl-dev \
+            libxml2 \
             python3 \
             rsync \
             unzip \
@@ -83,7 +86,7 @@ jobs:
       # 3. Runner information
       # ============================================================
 
-      - name: Show build environment
+      - name: Show runner information
         run: |
           echo "========================================"
           echo "CPU"
@@ -111,7 +114,6 @@ jobs:
           echo "GIT"
           echo "========================================"
 
-          git branch --show-current
           git rev-parse HEAD
 
           echo
@@ -122,56 +124,60 @@ jobs:
           make kernelversion
 
       # ============================================================
-      # 4. Check source
+      # 4. Verify Camellia source
       # ============================================================
 
-      - name: Check source
+      - name: Verify Camellia source
         run: |
           echo "========================================"
-          echo "Checking source tree"
+          echo "Checking Camellia source"
           echo "========================================"
 
-          if [ ! -f "build.sh" ]; then
-            echo "ERROR: build.sh not found!"
-            exit 1
-          fi
-
-          if [ ! -f "arch/arm64/configs/everpal_defconfig" ]; then
-            echo "ERROR: everpal_defconfig not found!"
-            exit 1
-          fi
+          test -f build.sh
+          test -f scripts/config
+          test -f arch/arm64/configs/camellia_defconfig
 
           chmod +x build.sh
+          chmod +x scripts/config
 
           echo
-          echo "build.sh:"
-          ls -lh build.sh
+          echo "Camellia defconfig:"
+          ls -lh arch/arm64/configs/camellia_defconfig
 
           echo
-          echo "everpal_defconfig:"
-          ls -lh arch/arm64/configs/everpal_defconfig
+          echo "Device project:"
+          grep '^CONFIG_ARCH_MTK_PROJECT' \
+            arch/arm64/configs/camellia_defconfig
+
+          echo
+          echo "Camera:"
+          grep '^CONFIG_CUSTOM_KERNEL_IMGSENSOR' \
+            arch/arm64/configs/camellia_defconfig
+
+          echo
+          echo "LCM:"
+          grep '^CONFIG_CUSTOM_KERNEL_LCM' \
+            arch/arm64/configs/camellia_defconfig
+
+          echo
+          echo "Fingerprint:"
+          grep '^CONFIG_MTK_FINGERPRINT_SELECT' \
+            arch/arm64/configs/camellia_defconfig
 
       # ============================================================
-      # 5. Inspect critical Makefile settings
+      # 5. Show build.sh
       # ============================================================
 
-      - name: Inspect kernel toolchain settings
+      - name: Inspect build.sh
         run: |
           echo "========================================"
-          echo "Top-level Makefile toolchain section"
+          echo "build.sh"
           echo "========================================"
 
-          sed -n '270,380p' Makefile
-
-          echo
-          echo "========================================"
-          echo "ARM64 Makefile compiler section"
-          echo "========================================"
-
-          sed -n '38,75p' arch/arm64/Makefile
+          sed -n '1,420p' build.sh
 
       # ============================================================
-      # 6. Workflow configuration
+      # 6. Build configuration
       # ============================================================
 
       - name: Show workflow configuration
@@ -197,13 +203,13 @@ jobs:
       # 7. Prepare directories
       # ============================================================
 
-      - name: Prepare build directories
+      - name: Prepare directories
         run: |
           mkdir -p out
           mkdir -p artifacts
 
       # ============================================================
-      # 8. Build
+      # 8. Build kernel
       # ============================================================
 
       - name: Build kernel
@@ -226,17 +232,20 @@ jobs:
 
           if [ "$WITH_KSU" = "true" ]; then
 
-            echo "KernelSU Next + SUSFS: ENABLED"
-
             ./build.sh --with-ksu 2>&1 | tee build.log
+            BUILD_RESULT=${PIPESTATUS[0]}
 
           else
 
-            echo "KernelSU Next + SUSFS: DISABLED"
-
             ./build.sh 2>&1 | tee build.log
+            BUILD_RESULT=${PIPESTATUS[0]}
 
           fi
+
+          echo
+          echo "BUILD_RESULT=$BUILD_RESULT"
+
+          exit "$BUILD_RESULT"
 
       # ============================================================
       # 9. Diagnostics
@@ -246,7 +255,7 @@ jobs:
         if: always()
         run: |
           echo "========================================"
-          echo "BUILD LOG - LAST 400 LINES"
+          echo "LAST 400 LINES"
           echo "========================================"
 
           if [ -f build.log ]; then
@@ -257,7 +266,7 @@ jobs:
 
           echo
           echo "========================================"
-          echo "KERNEL IMAGES"
+          echo "IMAGE FILES"
           echo "========================================"
 
           find . \
@@ -266,151 +275,92 @@ jobs:
               -name "Image" \
               -o -name "Image.gz" \
               -o -name "Image.gz-dtb" \
-              -o -name "Image-dtb" \
             \) \
             -not -path "./.git/*" \
-            -not -path "./artifacts/*" \
             -print
 
           echo
           echo "========================================"
-          echo "DTB"
+          echo "DTB FILES"
           echo "========================================"
 
           find . \
             -type f \
             -name "*.dtb" \
             -not -path "./.git/*" \
-            -not -path "./artifacts/*" \
             -print
 
           echo
           echo "========================================"
-          echo "KO MODULES"
+          echo "CONFIG"
           echo "========================================"
 
-          find . \
-            -type f \
-            -name "*.ko" \
-            -not -path "./.git/*" \
-            -not -path "./artifacts/*" \
-            -print
-
-          echo
-          echo "========================================"
-          echo "ZIP FILES"
-          echo "========================================"
-
-          find . \
-            -type f \
-            -name "*.zip" \
-            -not -path "./.git/*" \
-            -not -path "./artifacts/*" \
-            -print
-
-          echo
-          echo "========================================"
-          echo "DISK"
-          echo "========================================"
-
-          df -h
+          if [ -f out/.config ]; then
+            grep '^CONFIG_ARCH_MTK_PROJECT' out/.config || true
+            grep '^CONFIG_LOCALVERSION' out/.config || true
+            grep '^CONFIG_LTO' out/.config || true
+            grep '^CONFIG_CC_STACKPROTECTOR' out/.config || true
+          fi
 
       # ============================================================
-      # 10. Verify kernel image
+      # 10. Verify Image.gz
       # ============================================================
 
-      - name: Verify kernel image
+      - name: Verify Image.gz
         if: success()
         run: |
           IMAGE="out/arch/arm64/boot/Image.gz"
 
           echo "========================================"
-          echo "VERIFY KERNEL"
+          echo "VERIFY IMAGE"
           echo "========================================"
 
           if [ ! -f "$IMAGE" ]; then
-            echo "ERROR: Image.gz not found!"
+            echo "ERROR: Image.gz not found."
             exit 1
           fi
 
-          echo "Kernel:"
           ls -lh "$IMAGE"
 
           echo
           file "$IMAGE"
 
-      # ============================================================
-      # 11. Collect AnyKernel ZIP
-      # ============================================================
-
-      - name: Collect AnyKernel ZIP
-        if: success()
-        run: |
-          set -e
-
-          mkdir -p artifacts
-
-          echo "========================================"
-          echo "SEARCHING FOR KERNEL ZIP"
-          echo "========================================"
-
-          ZIP_FILE=$(find . \
-            -type f \
-            -name "AquaKernel-*.zip" \
-            -not -path "./.git/*" \
-            -not -path "./artifacts/*" \
-            | head -n 1)
-
-          if [ -z "$ZIP_FILE" ]; then
-
-            echo "ERROR: AquaKernel ZIP not found!"
-
-            echo
-            echo "All ZIP files:"
-            find . \
-              -type f \
-              -name "*.zip" \
-              -not -path "./.git/*" \
-              -print
-
-            echo
-            echo "Repository root:"
-            ls -lah
-
-            exit 1
-          fi
-
-          echo "Found:"
-          echo "$ZIP_FILE"
-
-          cp "$ZIP_FILE" artifacts/
-
           echo
-          echo "Artifact:"
-          ls -lh artifacts/
+          echo "Kernel version string:"
+
+          gunzip -c "$IMAGE" > /tmp/AquaCamellia-Image
+
+          strings /tmp/AquaCamellia-Image \
+            | grep -m1 "Linux version"
+
+          rm -f /tmp/AquaCamellia-Image
 
       # ============================================================
-      # 12. Upload kernel
+      # 11. Upload kernel artifacts
       # ============================================================
 
-      - name: Upload kernel ZIP
+      - name: Upload kernel artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: evergey-kernel-lineage-23.2
-          path: artifacts/AquaKernel-*.zip
-          if-no-files-found: error
+          name: camellia-aquakernel
+          path: |
+            artifacts/Image.gz
+            artifacts/camellia.config
+            artifacts/System.map
+            artifacts/arch/
+          if-no-files-found: warn
           retention-days: 14
 
       # ============================================================
-      # 13. Upload build log
+      # 12. Upload build log
       # ============================================================
 
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: evergey-build-log
+          name: camellia-build-log
           path: build.log
           if-no-files-found: warn
           retention-days: 14
