@@ -80,7 +80,7 @@ jobs:
             zip
 
       # ============================================================
-      # 3. Show runner information
+      # 3. Runner information
       # ============================================================
 
       - name: Show build environment
@@ -152,7 +152,26 @@ jobs:
           ls -lh arch/arm64/configs/everpal_defconfig
 
       # ============================================================
-      # 5. Show build configuration
+      # 5. Inspect critical Makefile settings
+      # ============================================================
+
+      - name: Inspect kernel toolchain settings
+        run: |
+          echo "========================================"
+          echo "Top-level Makefile toolchain section"
+          echo "========================================"
+
+          sed -n '270,380p' Makefile
+
+          echo
+          echo "========================================"
+          echo "ARM64 Makefile compiler section"
+          echo "========================================"
+
+          sed -n '38,75p' arch/arm64/Makefile
+
+      # ============================================================
+      # 6. Workflow configuration
       # ============================================================
 
       - name: Show workflow configuration
@@ -175,7 +194,7 @@ jobs:
           echo "${{ github.event.inputs.jobs || '2' }}"
 
       # ============================================================
-      # 6. Prepare directories
+      # 7. Prepare directories
       # ============================================================
 
       - name: Prepare build directories
@@ -184,7 +203,7 @@ jobs:
           mkdir -p artifacts
 
       # ============================================================
-      # 7. Build kernel
+      # 8. Build
       # ============================================================
 
       - name: Build kernel
@@ -220,18 +239,18 @@ jobs:
           fi
 
       # ============================================================
-      # 8. Build diagnostics
+      # 9. Diagnostics
       # ============================================================
 
       - name: Build diagnostics
         if: always()
         run: |
           echo "========================================"
-          echo "BUILD LOG - LAST 300 LINES"
+          echo "BUILD LOG - LAST 400 LINES"
           echo "========================================"
 
           if [ -f build.log ]; then
-            tail -300 build.log
+            tail -400 build.log
           else
             echo "build.log not found."
           fi
@@ -297,7 +316,7 @@ jobs:
           df -h
 
       # ============================================================
-      # 9. Verify kernel image
+      # 10. Verify kernel image
       # ============================================================
 
       - name: Verify kernel image
@@ -321,7 +340,7 @@ jobs:
           file "$IMAGE"
 
       # ============================================================
-      # 10. Collect AnyKernel ZIP
+      # 11. Collect AnyKernel ZIP
       # ============================================================
 
       - name: Collect AnyKernel ZIP
@@ -371,7 +390,7 @@ jobs:
           ls -lh artifacts/
 
       # ============================================================
-      # 11. Upload kernel
+      # 12. Upload kernel
       # ============================================================
 
       - name: Upload kernel ZIP
@@ -384,7 +403,7 @@ jobs:
           retention-days: 14
 
       # ============================================================
-      # 12. Upload build log
+      # 13. Upload build log
       # ============================================================
 
       - name: Upload build log
