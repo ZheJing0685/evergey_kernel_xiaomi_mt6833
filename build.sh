@@ -11,20 +11,14 @@ CURRENT_DIR="$(pwd)"
 # Device
 # ============================================================
 
-DEVICE="everpal"
-DEFCONFIG="${DEVICE}_defconfig"
+DEVICE="camellia"
+DEFCONFIG="camellia_defconfig"
 
 # ============================================================
 # Toolchain
 # ============================================================
 
 TC_DIR="$HOME/toolchains/ZyC-clang-22.0.0"
-
-# ============================================================
-# Output
-# ============================================================
-
-ZIPNAME="AquaKernel-${DATE}.zip"
 
 # ============================================================
 # Build options
@@ -54,23 +48,61 @@ for arg in "$@"; do
 done
 
 # ============================================================
-# Build information
+# Output
+# ============================================================
+
+ARTIFACT_DIR="$CURRENT_DIR/artifacts"
+
+# ============================================================
+# Information
 # ============================================================
 
 echo
 echo "========================================"
-echo "Aqua / evergey Kernel Build"
+echo "Aqua / evergey Camellia Kernel Build"
 echo "========================================"
 
-echo "Kernel       : Linux 4.14"
-echo "Device       : $DEVICE"
-echo "Defconfig    : $DEFCONFIG"
-echo "Build jobs   : $BUILD_JOBS"
-echo "KernelSU     : $INCLUDE_KSU"
-echo "Output       : out"
-echo "ZIP          : $ZIPNAME"
+echo "Device        : $DEVICE"
+echo "Defconfig     : $DEFCONFIG"
+echo "Build jobs    : $BUILD_JOBS"
+echo "KernelSU      : $INCLUDE_KSU"
+echo "Output        : out"
+echo "Artifact dir  : $ARTIFACT_DIR"
 
 echo "========================================"
+
+# ============================================================
+# Check source
+# ============================================================
+
+echo
+echo "========================================"
+echo "Checking source"
+echo "========================================"
+
+if [ ! -f "Makefile" ]; then
+    echo "ERROR: Kernel Makefile not found."
+    exit 1
+fi
+
+if [ ! -f "arch/arm64/configs/$DEFCONFIG" ]; then
+    echo "ERROR: $DEFCONFIG not found."
+    exit 1
+fi
+
+if [ ! -f "scripts/config" ]; then
+    echo "ERROR: scripts/config not found."
+    exit 1
+fi
+
+chmod +x scripts/config
+
+echo "Kernel source:"
+pwd
+
+echo
+echo "Defconfig:"
+ls -lh "arch/arm64/configs/$DEFCONFIG"
 
 # ============================================================
 # Clean generated files
@@ -105,26 +137,11 @@ if [ "$CLEAN_BUILD" = true ]; then
 fi
 
 mkdir -p out
+rm -rf "$ARTIFACT_DIR"
+mkdir -p "$ARTIFACT_DIR"
 
 # ============================================================
-# Check defconfig
-# ============================================================
-
-echo
-echo "========================================"
-echo "Checking defconfig"
-echo "========================================"
-
-if [ ! -f "arch/arm64/configs/$DEFCONFIG" ]; then
-    echo "ERROR: arch/arm64/configs/$DEFCONFIG not found!"
-    exit 1
-fi
-
-echo "Found:"
-ls -lh "arch/arm64/configs/$DEFCONFIG"
-
-# ============================================================
-# Prepare ZyCromerZ Clang 22
+# Prepare Clang 22
 # ============================================================
 
 echo
@@ -135,13 +152,15 @@ echo "========================================"
 if [ ! -x "$TC_DIR/bin/clang" ]; then
 
     echo "Clang 22 not found."
-    echo "Downloading..."
 
     mkdir -p "$TC_DIR"
 
     cd "$TC_DIR" || exit 1
 
     TOOLCHAIN_ARCHIVE="Clang-22.0.0git-20250928.tar.gz"
+
+    echo "Downloading:"
+    echo "$TOOLCHAIN_ARCHIVE"
 
     wget -q --show-progress \
         "https://github.com/ZyCromerZ/Clang/releases/download/22.0.0git-20250928-release/${TOOLCHAIN_ARCHIVE}"
@@ -166,7 +185,7 @@ fi
 export PATH="$TC_DIR/bin:$PATH"
 
 # ============================================================
-# Kernel build environment
+# Compiler environment
 # ============================================================
 
 export ARCH=arm64
@@ -178,17 +197,12 @@ export LLVM_IAS=1
 export CC=clang
 export LD=ld.lld
 
-# IMPORTANT:
-# This old Android 4.14 Kbuild uses CLANG_TRIPLE / CROSS_COMPILE
-# to establish the AArch64 target for Clang.
+# Important for old 4.14 Android Kbuild
 export CLANG_TRIPLE=aarch64-linux-gnu-
 export CROSS_COMPILE=aarch64-linux-gnu-
 
-# Do not force HOSTCC/HOSTCXX here.
-# The kernel's own Makefile selects them when LLVM=1.
-
 # ============================================================
-# Compiler information
+# Compiler checks
 # ============================================================
 
 echo
@@ -199,10 +213,6 @@ echo "========================================"
 echo "clang:"
 command -v clang
 clang --version
-
-echo
-echo "clang target:"
-clang -print-target-triple
 
 echo
 echo "ld.lld:"
@@ -223,7 +233,11 @@ echo "llvm-objcopy:"
 command -v llvm-objcopy
 
 echo
-echo "Configured target:"
+echo "clang target:"
+clang --target=aarch64-linux-gnu -print-target-triple
+
+echo
+echo "CLANG_TRIPLE:"
 echo "$CLANG_TRIPLE"
 
 echo
@@ -231,167 +245,132 @@ echo "CROSS_COMPILE:"
 echo "$CROSS_COMPILE"
 
 # ============================================================
-# Check target triple explicitly
-# ============================================================
-
-echo
-echo "========================================"
-echo "Testing AArch64 Clang target"
-echo "========================================"
-
-cat > /tmp/test_arm64.c <<'EOF'
-int test_function(void)
-{
-    return 0;
-}
-EOF
-
-clang \
-    --target=aarch64-linux-gnu \
-    -c \
-    /tmp/test_arm64.c \
-    -o /tmp/test_arm64.o
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: Clang cannot compile for AArch64."
-    exit 1
-fi
-
-file /tmp/test_arm64.o
-
-rm -f /tmp/test_arm64.c
-rm -f /tmp/test_arm64.o
-
-# ============================================================
 # KernelSU Next + SUSFS
 # ============================================================
 
-if [ -f out/.ksu_applied ]; then
-    echo
-    echo "KernelSU Next has already been applied."
-fi
-
-if [[ "$INCLUDE_KSU" = true && ! -f out/.ksu_applied ]]; then
+if [ "$INCLUDE_KSU" = true ]; then
 
     echo
     echo "========================================"
-    echo "Applying KernelSU Next + SUSFS"
+    echo "KernelSU Next + SUSFS ENABLED"
     echo "========================================"
 
-    curl -LSs \
-        "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" \
-        | bash
+    if [ ! -f out/.ksu_applied ]; then
 
-    if [ $? -ne 0 ]; then
-        echo "ERROR: KernelSU setup failed."
-        exit 1
-    fi
-
-    git clone \
-        --depth=1 \
-        "https://github.com/JackA1ltman/NonGKI_Kernel_Build_2nd.git" \
-        SU_patch
-
-    if [ $? -ne 0 ]; then
-        echo "ERROR: Failed to clone SU_patch."
-        exit 1
-    fi
-
-    for patch in SU_patch/Patches/*sh; do
-        if [ -f "$patch" ]; then
-
-            echo
-            echo "Applying patch script:"
-            echo "$patch"
-
-            bash "$patch"
-
-            if [ $? -ne 0 ]; then
-                echo "ERROR: Patch script failed:"
-                echo "$patch"
-                exit 1
-            fi
-        fi
-    done
-
-    if [ -f "SU_patch/Patches/Patch/susfs_patch_to_4.14.patch" ]; then
-
-        echo
-        echo "Applying SUSFS 4.14 patch..."
-
-        patch -p1 \
-            < "SU_patch/Patches/Patch/susfs_patch_to_4.14.patch"
+        curl -LSs \
+            "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" \
+            | bash
 
         if [ $? -ne 0 ]; then
-            echo "ERROR: SUSFS 4.14 patch failed."
+            echo "ERROR: KernelSU setup failed."
             exit 1
         fi
+
+        git clone \
+            --depth=1 \
+            "https://github.com/JackA1ltman/NonGKI_Kernel_Build_2nd.git" \
+            SU_patch
+
+        if [ $? -ne 0 ]; then
+            echo "ERROR: Failed to clone SU_patch."
+            exit 1
+        fi
+
+        for patch in SU_patch/Patches/*sh; do
+
+            if [ -f "$patch" ]; then
+
+                echo
+                echo "Applying:"
+                echo "$patch"
+
+                bash "$patch"
+
+                if [ $? -ne 0 ]; then
+                    echo "ERROR: Patch failed:"
+                    echo "$patch"
+                    exit 1
+                fi
+
+            fi
+
+        done
+
+        if [ -f "SU_patch/Patches/Patch/susfs_patch_to_4.14.patch" ]; then
+
+            echo
+            echo "Applying SUSFS 4.14 patch..."
+
+            patch -p1 \
+                < "SU_patch/Patches/Patch/susfs_patch_to_4.14.patch"
+
+            if [ $? -ne 0 ]; then
+                echo "ERROR: SUSFS 4.14 patch failed."
+                exit 1
+            fi
+
+        fi
+
+        wget -q \
+            "https://raw.githubusercontent.com/Addster09/EverpalPatches/main/KSUPatches/defconfig-Enable-KSU-and-SUSFS.patch"
+
+        wget -q \
+            "https://raw.githubusercontent.com/Addster09/EverpalPatches/main/KSUPatches/susfs_patch_taskmmu.patch"
+
+        patch -p1 \
+            < defconfig-Enable-KSU-and-SUSFS.patch
+
+        if [ $? -ne 0 ]; then
+            echo "ERROR: KSU defconfig patch failed."
+            exit 1
+        fi
+
+        patch -p1 \
+            < susfs_patch_taskmmu.patch
+
+        if [ $? -ne 0 ]; then
+            echo "ERROR: SUSFS taskmmu patch failed."
+            exit 1
+        fi
+
+        rm -f defconfig-Enable-KSU-and-SUSFS.patch
+        rm -f susfs_patch_taskmmu.patch
+        rm -rf SU_patch
+
+        touch out/.ksu_applied
+
+        echo
+        echo "KernelSU Next + SUSFS applied successfully."
+
+    else
+
+        echo "KernelSU patch marker already exists."
+
     fi
+
+else
 
     echo
-    echo "Downloading Everpal KSU patches..."
+    echo "========================================"
+    echo "KernelSU Next + SUSFS DISABLED"
+    echo "========================================"
 
-    wget -q \
-        "https://raw.githubusercontent.com/Addster09/EverpalPatches/main/KSUPatches/defconfig-Enable-KSU-and-SUSFS.patch"
-
-    if [ $? -ne 0 ]; then
-        echo "ERROR: Failed to download KSU defconfig patch."
-        exit 1
-    fi
-
-    wget -q \
-        "https://raw.githubusercontent.com/Addster09/EverpalPatches/main/KSUPatches/susfs_patch_taskmmu.patch"
-
-    if [ $? -ne 0 ]; then
-        echo "ERROR: Failed to download SUSFS taskmmu patch."
-        exit 1
-    fi
-
-    echo
-    echo "Applying KSU/SUSFS defconfig patch..."
-
-    patch -p1 < defconfig-Enable-KSU-and-SUSFS.patch
-
-    if [ $? -ne 0 ]; then
-        echo "ERROR: KSU defconfig patch failed."
-        exit 1
-    fi
-
-    echo
-    echo "Applying taskmmu SUSFS patch..."
-
-    patch -p1 < susfs_patch_taskmmu.patch
-
-    if [ $? -ne 0 ]; then
-        echo "ERROR: taskmmu SUSFS patch failed."
-        exit 1
-    fi
-
-    rm -f defconfig-Enable-KSU-and-SUSFS.patch
-    rm -f susfs_patch_taskmmu.patch
-
-    rm -rf SU_patch
-
-    touch out/.ksu_applied
-
-    echo
-    echo "KernelSU Next + SUSFS applied successfully."
 fi
 
 # ============================================================
-# Generate defconfig
+# Generate Camellia defconfig
 # ============================================================
 
 echo
 echo "========================================"
-echo "Generating defconfig"
+echo "Generating Camellia defconfig"
 echo "========================================"
 
 make \
     O=out \
     ARCH=arm64 \
-    CROSS_COMPILE=aarch64-linux-gnu- \
-    CLANG_TRIPLE=aarch64-linux-gnu- \
+    CLANG_TRIPLE="$CLANG_TRIPLE" \
+    CROSS_COMPILE="$CROSS_COMPILE" \
     LLVM=1 \
     LLVM_IAS=1 \
     "$DEFCONFIG"
@@ -404,28 +383,48 @@ if [ $DEFCONFIG_RESULT -ne 0 ]; then
 fi
 
 # ============================================================
-# Clang 22 / old-kernel compatibility
+# Set unique version string
 # ============================================================
 
 echo
 echo "========================================"
-echo "Adjusting compiler compatibility"
+echo "Setting kernel local version"
 echo "========================================"
 
+scripts/config \
+    --file out/.config \
+    --set-str LOCALVERSION "-AquaCamellia"
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to set LOCALVERSION."
+    exit 1
+fi
+
+# ============================================================
+# Clang 22 compatibility
+# ============================================================
+
+echo
+echo "========================================"
+echo "Adjusting Clang compatibility"
+echo "========================================"
+
+# Old Linux 4.14 compiler check can reject modern Clang.
 if grep -q '^CONFIG_CC_STACKPROTECTOR_STRONG=y' out/.config; then
 
     echo "Disabling CONFIG_CC_STACKPROTECTOR_STRONG..."
 
-    sed -i \
-        's/^CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/' \
-        out/.config
+    scripts/config \
+        --file out/.config \
+        --disable CC_STACKPROTECTOR_STRONG
+
 fi
 
 make \
     O=out \
     ARCH=arm64 \
-    CROSS_COMPILE=aarch64-linux-gnu- \
-    CLANG_TRIPLE=aarch64-linux-gnu- \
+    CLANG_TRIPLE="$CLANG_TRIPLE" \
+    CROSS_COMPILE="$CROSS_COMPILE" \
     LLVM=1 \
     LLVM_IAS=1 \
     olddefconfig
@@ -437,32 +436,25 @@ if [ $OLDDEFCONFIG_RESULT -ne 0 ]; then
     exit $OLDDEFCONFIG_RESULT
 fi
 
-echo
-echo "Stack protector configuration:"
-
-grep "CONFIG_CC_STACKPROTECTOR" out/.config || true
-
 # ============================================================
-# Build command diagnostic
+# Show final configuration
 # ============================================================
 
 echo
 echo "========================================"
-echo "Build environment"
+echo "Final Camellia configuration"
 echo "========================================"
 
-echo "ARCH          = $ARCH"
-echo "SUBARCH       = $SUBARCH"
-echo "CC            = $CC"
-echo "LD            = $LD"
-echo "LLVM          = $LLVM"
-echo "LLVM_IAS      = $LLVM_IAS"
-echo "CLANG_TRIPLE  = $CLANG_TRIPLE"
-echo "CROSS_COMPILE = $CROSS_COMPILE"
-echo "BUILD_JOBS    = $BUILD_JOBS"
+grep '^CONFIG_ARCH_MTK_PROJECT' out/.config || true
+grep '^CONFIG_CUSTOM_KERNEL_IMGSENSOR' out/.config || true
+grep '^CONFIG_CUSTOM_KERNEL_LCM' out/.config || true
+grep '^CONFIG_MTK_FINGERPRINT_SELECT' out/.config || true
+grep '^CONFIG_LOCALVERSION' out/.config || true
+grep '^CONFIG_LTO' out/.config || true
+grep '^CONFIG_CC_STACKPROTECTOR' out/.config || true
 
 # ============================================================
-# Kernel compilation
+# Build kernel
 # ============================================================
 
 echo
@@ -470,7 +462,12 @@ echo "========================================"
 echo "Starting kernel compilation"
 echo "========================================"
 
-echo "Parallel jobs: $BUILD_JOBS"
+echo "Parallel jobs : $BUILD_JOBS"
+echo "Device        : $DEVICE"
+echo "Defconfig     : $DEFCONFIG"
+echo "Compiler      : $(clang --version | head -1)"
+echo "CLANG_TRIPLE  : $CLANG_TRIPLE"
+echo "CROSS_COMPILE : $CROSS_COMPILE"
 
 echo "========================================"
 
@@ -479,8 +476,8 @@ make \
     O=out \
     ARCH=arm64 \
     CC=clang \
-    CLANG_TRIPLE=aarch64-linux-gnu- \
-    CROSS_COMPILE=aarch64-linux-gnu- \
+    CLANG_TRIPLE="$CLANG_TRIPLE" \
+    CROSS_COMPILE="$CROSS_COMPILE" \
     LLVM=1 \
     LLVM_IAS=1 \
     KCFLAGS="-Wno-error=default-const-init-var-unsafe" \
@@ -498,23 +495,6 @@ if [ $BUILD_RESULT -ne 0 ]; then
 
     echo "Exit code: $BUILD_RESULT"
 
-    echo
-    echo "For diagnostic purposes, print the exact command"
-    echo "for scripts/mod/empty.o with V=1..."
-
-    make \
-        -j1 \
-        O=out \
-        ARCH=arm64 \
-        CC=clang \
-        CLANG_TRIPLE=aarch64-linux-gnu- \
-        CROSS_COMPILE=aarch64-linux-gnu- \
-        LLVM=1 \
-        LLVM_IAS=1 \
-        V=1 \
-        scripts/mod/empty.o \
-        || true
-
     exit $BUILD_RESULT
 fi
 
@@ -526,7 +506,7 @@ IMAGE="out/arch/arm64/boot/Image.gz"
 
 echo
 echo "========================================"
-echo "Checking kernel image"
+echo "Verifying Image.gz"
 echo "========================================"
 
 if [ ! -f "$IMAGE" ]; then
@@ -534,102 +514,63 @@ if [ ! -f "$IMAGE" ]; then
     exit 1
 fi
 
-echo "Kernel image:"
 ls -lh "$IMAGE"
 
-echo
 file "$IMAGE"
 
 # ============================================================
-# Show DTBs
+# Verify kernel version
 # ============================================================
 
 echo
 echo "========================================"
-echo "Generated DTBs"
+echo "Kernel version"
 echo "========================================"
+
+rm -f /tmp/AquaCamellia-Image
+
+gunzip -c "$IMAGE" > /tmp/AquaCamellia-Image
+
+strings /tmp/AquaCamellia-Image \
+    | grep -m1 "Linux version" \
+    || true
+
+rm -f /tmp/AquaCamellia-Image
+
+# ============================================================
+# Copy artifacts
+# ============================================================
+
+echo
+echo "========================================"
+echo "Collecting artifacts"
+echo "========================================"
+
+cp "$IMAGE" \
+    "$ARTIFACT_DIR/Image.gz"
+
+cp out/.config \
+    "$ARTIFACT_DIR/camellia.config"
+
+if [ -f "System.map" ]; then
+    cp System.map "$ARTIFACT_DIR/System.map"
+fi
 
 find out/arch/arm64/boot \
     -type f \
     -name "*.dtb" \
+    -exec cp --parents {} "$ARTIFACT_DIR/" \;
+
+echo
+echo "Artifact tree:"
+
+find "$ARTIFACT_DIR" \
+    -type f \
     -print \
     | sort
 
 # ============================================================
-# AnyKernel3
-# ============================================================
-
-echo
-echo "========================================"
-echo "Creating AnyKernel3 package"
-echo "========================================"
-
-rm -rf AnyKernel3
-
-git clone \
-    --depth=1 \
-    "https://github.com/Addster09/AnyKernel3" \
-    AnyKernel3
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to clone AnyKernel3."
-    exit 1
-fi
-
-cp "$IMAGE" AnyKernel3/Image.gz
-
-if [ ! -f AnyKernel3/Image.gz ]; then
-    echo "ERROR: Failed to copy Image.gz."
-    exit 1
-fi
-
-(
-    cd AnyKernel3 || exit 1
-
-    zip -r9 \
-        "../$ZIPNAME" \
-        * \
-        -x '*.git*' \
-        README.md \
-        '*placeholder'
-)
-
-ZIP_RESULT=$?
-
-if [ $ZIP_RESULT -ne 0 ]; then
-    echo "ERROR: Failed to create kernel ZIP."
-    exit $ZIP_RESULT
-fi
-
-# ============================================================
-# Verify ZIP
-# ============================================================
-
-echo
-echo "========================================"
-echo "Checking kernel ZIP"
-echo "========================================"
-
-if [ ! -f "$ZIPNAME" ]; then
-    echo "ERROR: $ZIPNAME was not created."
-    exit 1
-fi
-
-ZIP_SIZE="$(du -h "$ZIPNAME" | cut -f1)"
-
-ls -lh "$ZIPNAME"
-
-echo
-echo "ZIP size: $ZIP_SIZE"
-
-# ============================================================
-# Cleanup
-# ============================================================
-
-rm -rf AnyKernel3
-
-# ============================================================
-# Finished
+# Finish
 # ============================================================
 
 echo
@@ -637,12 +578,9 @@ echo "========================================"
 echo "BUILD SUCCESSFUL"
 echo "========================================"
 
-echo "Kernel:"
-echo "$IMAGE"
-
-echo
-echo "AnyKernel3:"
-echo "$ZIPNAME"
+echo "Device       : $DEVICE"
+echo "Kernel image : $IMAGE"
+echo "Artifacts    : $ARTIFACT_DIR"
 
 echo
 echo "Completed in:"
