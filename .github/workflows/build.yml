@@ -43,7 +43,7 @@ jobs:
     steps:
 
       # ============================================================
-      # Checkout
+      # 1. Checkout source
       # ============================================================
 
       - name: Checkout source
@@ -54,13 +54,19 @@ jobs:
           fetch-depth: 1
 
       # ============================================================
-      # Free runner disk space
+      # 2. Free disk space
       # ============================================================
 
       - name: Free disk space
         run: |
-          echo "===== Disk before cleanup ====="
+          echo "========================================"
+          echo "Disk space before cleanup"
+          echo "========================================"
+
           df -h
+
+          echo
+          echo "Cleaning unused Android / .NET / GHC files..."
 
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /usr/share/dotnet
@@ -69,11 +75,14 @@ jobs:
           sudo apt-get clean
 
           echo
-          echo "===== Disk after cleanup ====="
+          echo "========================================"
+          echo "Disk space after cleanup"
+          echo "========================================"
+
           df -h
 
       # ============================================================
-      # Dependencies
+      # 3. Install dependencies
       # ============================================================
 
       - name: Install dependencies
@@ -98,33 +107,37 @@ jobs:
             zip
 
       # ============================================================
-      # System information
+      # 4. Show system information
       # ============================================================
 
       - name: Show build environment
         run: |
           echo "========================================"
-          echo "CPU"
+          echo "CPU INFORMATION"
           echo "========================================"
+
           nproc
           lscpu
 
           echo
           echo "========================================"
-          echo "MEMORY"
+          echo "MEMORY INFORMATION"
           echo "========================================"
+
           free -h
 
           echo
           echo "========================================"
-          echo "DISK"
+          echo "DISK INFORMATION"
           echo "========================================"
+
           df -h
 
           echo
           echo "========================================"
-          echo "GIT"
+          echo "GIT INFORMATION"
           echo "========================================"
+
           git branch --show-current
           git rev-parse HEAD
 
@@ -132,10 +145,11 @@ jobs:
           echo "========================================"
           echo "KERNEL VERSION"
           echo "========================================"
+
           make kernelversion
 
       # ============================================================
-      # Inspect source tree
+      # 5. Inspect kernel source
       # ============================================================
 
       - name: Inspect kernel source
@@ -143,18 +157,19 @@ jobs:
           echo "========================================"
           echo "Kernel Makefile"
           echo "========================================"
+
           head -40 Makefile
 
           echo
           echo "========================================"
-          echo "everpal defconfig"
+          echo "Checking everpal_defconfig"
           echo "========================================"
 
           if [ -f "arch/arm64/configs/everpal_defconfig" ]; then
-            echo "FOUND:"
+            echo "everpal_defconfig FOUND"
             ls -lh arch/arm64/configs/everpal_defconfig
           else
-            echo "ERROR: everpal_defconfig not found!"
+            echo "ERROR: everpal_defconfig NOT FOUND!"
             exit 1
           fi
 
@@ -171,7 +186,7 @@ jobs:
             -print | sort
 
       # ============================================================
-      # Show build.sh
+      # 6. Inspect build.sh
       # ============================================================
 
       - name: Inspect build.sh
@@ -181,43 +196,51 @@ jobs:
             exit 1
           fi
 
+          chmod +x ./build.sh
+
           echo "========================================"
           echo "build.sh"
           echo "========================================"
 
-          sed -n '1,260p' build.sh
+          sed -n '1,320p' ./build.sh
 
       # ============================================================
-      # Prepare output directory
+      # 7. Prepare build environment
       # ============================================================
 
-      - name: Prepare build directory
+      - name: Prepare build environment
         run: |
           mkdir -p out
           mkdir -p artifacts
 
-          echo "ARCH=$ARCH"
-          echo "SUBARCH=$SUBARCH"
-          echo "LLVM=$LLVM"
-          echo "LLVM_IAS=$LLVM_IAS"
+          echo "========================================"
+          echo "Build environment"
+          echo "========================================"
+
+          echo "ARCH       = $ARCH"
+          echo "SUBARCH    = $SUBARCH"
+          echo "LLVM       = $LLVM"
+          echo "LLVM_IAS   = $LLVM_IAS"
 
       # ============================================================
-      # ccache
+      # 8. Configure ccache
       # ============================================================
 
       - name: Configure ccache
         run: |
+          echo "========================================"
+          echo "CCACHE"
+          echo "========================================"
+
           ccache --version
 
           ccache --max-size=5G
           ccache --set-config=compression=true
 
-          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
-
           ccache -s
 
       # ============================================================
-      # Restore ccache
+      # 9. Restore ccache
       # ============================================================
 
       - name: Restore ccache
@@ -230,17 +253,18 @@ jobs:
             kernel-ccache-${{ runner.os }}-
 
       # ============================================================
-      # Build
+      # 10. Build kernel
       # ============================================================
 
       - name: Build kernel
         env:
           BUILD_JOBS: ${{ github.event.inputs.jobs || '2' }}
           WITH_KSU: ${{ github.event.inputs.with_ksu || 'false' }}
+
         run: |
           set -o pipefail
 
-          chmod +x build.sh
+          chmod +x ./build.sh
 
           echo "========================================"
           echo "BUILD CONFIGURATION"
@@ -255,21 +279,25 @@ jobs:
 
           echo
           echo "========================================"
-          echo "START BUILD"
+          echo "STARTING BUILD"
           echo "========================================"
 
           if [ "$WITH_KSU" = "true" ]; then
-            echo "Building with KernelSU Next + SUSFS..."
+
+            echo "KernelSU Next + SUSFS ENABLED"
 
             ./build.sh --with-ksu 2>&1 | tee build.log
+
           else
-            echo "Building normal kernel..."
+
+            echo "KernelSU Next + SUSFS DISABLED"
 
             ./build.sh 2>&1 | tee build.log
+
           fi
 
       # ============================================================
-      # Check build result
+      # 11. Check build result
       # ============================================================
 
       - name: Check build result
@@ -322,22 +350,52 @@ jobs:
 
           echo
           echo "========================================"
-          echo "ANYKERNEL ZIP"
+          echo "ZIP FILES"
           echo "========================================"
 
-          find . -maxdepth 2 -type f \
+          find . -type f \
             -name "*.zip" \
+            -not -path "./.git/*" \
             -print
 
           echo
           echo "========================================"
-          echo "CCACHE"
+          echo "CCACHE STATISTICS"
           echo "========================================"
 
           ccache -s || true
 
       # ============================================================
-      # Find generated AnyKernel package
+      # 12. Verify kernel image
+      # ============================================================
+
+      - name: Verify kernel image
+        if: success()
+        run: |
+          echo "========================================"
+          echo "VERIFYING KERNEL IMAGE"
+          echo "========================================"
+
+          IMAGE="out/arch/arm64/boot/Image.gz"
+
+          if [ ! -f "$IMAGE" ]; then
+            echo "ERROR: Image.gz not found!"
+            echo
+            echo "Expected:"
+            echo "$IMAGE"
+            echo
+            echo "Actual boot directory:"
+            find out/arch/arm64/boot -maxdepth 2 -type f -print 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "Kernel image found:"
+          ls -lh "$IMAGE"
+
+          file "$IMAGE"
+
+      # ============================================================
+      # 13. Collect AnyKernel3 ZIP
       # ============================================================
 
       - name: Collect AnyKernel package
@@ -347,32 +405,56 @@ jobs:
 
           mkdir -p artifacts
 
-          echo "Searching for kernel ZIP..."
+          echo "========================================"
+          echo "SEARCHING FOR AQUAKERNEL ZIP"
+          echo "========================================"
 
           ZIP_FILE=$(find . \
-            -maxdepth 2 \
             -type f \
-            -name "*.zip" \
+            -name "AquaKernel-*.zip" \
             -not -path "./.git/*" \
             -not -path "./artifacts/*" \
             | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: Kernel ZIP not found!"
+
+            echo "ERROR: AquaKernel ZIP not found!"
+
+            echo
+            echo "========================================"
+            echo "ALL ZIP FILES"
+            echo "========================================"
+
+            find . \
+              -type f \
+              -name "*.zip" \
+              -not -path "./.git/*" \
+              -print
+
+            echo
+            echo "========================================"
+            echo "ROOT DIRECTORY"
+            echo "========================================"
+
+            ls -lah
+
             exit 1
           fi
 
-          echo "Found:"
+          echo "Kernel ZIP found:"
           echo "$ZIP_FILE"
 
           cp "$ZIP_FILE" artifacts/
 
           echo
-          echo "Artifacts:"
+          echo "========================================"
+          echo "ARTIFACT"
+          echo "========================================"
+
           ls -lh artifacts/
 
       # ============================================================
-      # Upload kernel
+      # 14. Upload kernel ZIP
       # ============================================================
 
       - name: Upload kernel ZIP
@@ -380,12 +462,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: evergey-kernel-lineage-23.2
-          path: artifacts/*.zip
+          path: artifacts/AquaKernel-*.zip
           if-no-files-found: error
           retention-days: 14
 
       # ============================================================
-      # Upload build log
+      # 15. Upload build log
       # ============================================================
 
       - name: Upload build log
