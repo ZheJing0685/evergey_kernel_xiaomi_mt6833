@@ -42,10 +42,6 @@ jobs:
 
     steps:
 
-      # ============================================================
-      # 1. Checkout source
-      # ============================================================
-
       - name: Checkout source
         uses: actions/checkout@v4
         with:
@@ -53,37 +49,14 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      # ============================================================
-      # 2. Free disk space
-      # ============================================================
-
       - name: Free disk space
         run: |
-          echo "========================================"
-          echo "Disk space before cleanup"
-          echo "========================================"
-
-          df -h
-
-          echo
-          echo "Cleaning unused Android / .NET / GHC files..."
-
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /opt/ghc
-
           sudo apt-get clean
 
-          echo
-          echo "========================================"
-          echo "Disk space after cleanup"
-          echo "========================================"
-
           df -h
-
-      # ============================================================
-      # 3. Install dependencies
-      # ============================================================
 
       - name: Install dependencies
         run: |
@@ -106,155 +79,58 @@ jobs:
             xz-utils \
             zip
 
-      # ============================================================
-      # 4. Show system information
-      # ============================================================
-
       - name: Show build environment
         run: |
-          echo "========================================"
-          echo "CPU INFORMATION"
-          echo "========================================"
-
+          echo "===== CPU ====="
           nproc
           lscpu
 
           echo
-          echo "========================================"
-          echo "MEMORY INFORMATION"
-          echo "========================================"
-
+          echo "===== MEMORY ====="
           free -h
 
           echo
-          echo "========================================"
-          echo "DISK INFORMATION"
-          echo "========================================"
-
+          echo "===== DISK ====="
           df -h
 
           echo
-          echo "========================================"
-          echo "GIT INFORMATION"
-          echo "========================================"
-
-          git branch --show-current
+          echo "===== GIT ====="
           git rev-parse HEAD
 
           echo
-          echo "========================================"
-          echo "KERNEL VERSION"
-          echo "========================================"
-
+          echo "===== KERNEL ====="
           make kernelversion
 
-      # ============================================================
-      # 5. Inspect kernel source
-      # ============================================================
-
-      - name: Inspect kernel source
+      - name: Check source
         run: |
-          echo "========================================"
-          echo "Kernel Makefile"
-          echo "========================================"
-
-          head -40 Makefile
-
-          echo
-          echo "========================================"
-          echo "Checking everpal_defconfig"
-          echo "========================================"
-
-          if [ -f "arch/arm64/configs/everpal_defconfig" ]; then
-            echo "everpal_defconfig FOUND"
-            ls -lh arch/arm64/configs/everpal_defconfig
-          else
-            echo "ERROR: everpal_defconfig NOT FOUND!"
+          if [ ! -f arch/arm64/configs/everpal_defconfig ]; then
+            echo "ERROR: everpal_defconfig not found!"
             exit 1
           fi
 
-          echo
-          echo "========================================"
-          echo "Build scripts"
-          echo "========================================"
-
-          find . -maxdepth 3 -type f \
-            \( \
-              -name "build.sh" \
-              -o -name "build.config*" \
-            \) \
-            -print | sort
-
-      # ============================================================
-      # 6. Inspect build.sh
-      # ============================================================
-
-      - name: Inspect build.sh
-        run: |
-          if [ ! -f "./build.sh" ]; then
+          if [ ! -f build.sh ]; then
             echo "ERROR: build.sh not found!"
             exit 1
           fi
 
-          chmod +x ./build.sh
+          chmod +x build.sh
 
-          echo "========================================"
-          echo "build.sh"
-          echo "========================================"
+          echo "everpal_defconfig:"
+          ls -lh arch/arm64/configs/everpal_defconfig
 
-          sed -n '1,320p' ./build.sh
-
-      # ============================================================
-      # 7. Prepare build environment
-      # ============================================================
+          echo
+          echo "build.sh:"
+          ls -lh build.sh
 
       - name: Prepare build environment
         run: |
           mkdir -p out
           mkdir -p artifacts
 
-          echo "========================================"
-          echo "Build environment"
-          echo "========================================"
-
-          echo "ARCH       = $ARCH"
-          echo "SUBARCH    = $SUBARCH"
-          echo "LLVM       = $LLVM"
-          echo "LLVM_IAS   = $LLVM_IAS"
-
-      # ============================================================
-      # 8. Configure ccache
-      # ============================================================
-
-      - name: Configure ccache
-        run: |
-          echo "========================================"
-          echo "CCACHE"
-          echo "========================================"
-
-          ccache --version
-
-          ccache --max-size=5G
-          ccache --set-config=compression=true
-
-          ccache -s
-
-      # ============================================================
-      # 9. Restore ccache
-      # ============================================================
-
-      - name: Restore ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: kernel-ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
-          restore-keys: |
-            kernel-ccache-${{ runner.os }}-${{ github.ref_name }}-
-            kernel-ccache-${{ runner.os }}-
-
-      # ============================================================
-      # 10. Build kernel
-      # ============================================================
+          echo "ARCH=$ARCH"
+          echo "SUBARCH=$SUBARCH"
+          echo "LLVM=$LLVM"
+          echo "LLVM_IAS=$LLVM_IAS"
 
       - name: Build kernel
         env:
@@ -264,58 +140,38 @@ jobs:
         run: |
           set -o pipefail
 
-          chmod +x ./build.sh
-
           echo "========================================"
           echo "BUILD CONFIGURATION"
           echo "========================================"
 
-          echo "ARCH       = $ARCH"
-          echo "SUBARCH    = $SUBARCH"
-          echo "LLVM       = $LLVM"
-          echo "LLVM_IAS   = $LLVM_IAS"
-          echo "BUILD_JOBS = $BUILD_JOBS"
-          echo "WITH_KSU   = $WITH_KSU"
+          echo "BUILD_JOBS=$BUILD_JOBS"
+          echo "WITH_KSU=$WITH_KSU"
 
           echo
           echo "========================================"
-          echo "STARTING BUILD"
+          echo "START BUILD"
           echo "========================================"
 
           if [ "$WITH_KSU" = "true" ]; then
-
-            echo "KernelSU Next + SUSFS ENABLED"
-
             ./build.sh --with-ksu 2>&1 | tee build.log
-
           else
-
-            echo "KernelSU Next + SUSFS DISABLED"
-
             ./build.sh 2>&1 | tee build.log
-
           fi
 
-      # ============================================================
-      # 11. Check build result
-      # ============================================================
-
-      - name: Check build result
+      - name: Show build result
         if: always()
         run: |
           echo "========================================"
-          echo "BUILD LOG - LAST 300 LINES"
+          echo "LAST 300 LINES"
           echo "========================================"
 
           if [ -f build.log ]; then
             tail -300 build.log
-          else
-            echo "build.log not found."
           fi
 
           echo
           echo "========================================"
-          echo "KERNEL IMAGE"
+          echo "IMAGE"
           echo "========================================"
 
           find . -type f \
@@ -323,7 +179,6 @@ jobs:
               -name "Image" \
               -o -name "Image.gz" \
               -o -name "Image.gz-dtb" \
-              -o -name "Image-dtb" \
             \) \
             -not -path "./.git/*" \
             -print
@@ -333,81 +188,44 @@ jobs:
           echo "DTB"
           echo "========================================"
 
-          find . -type f \
+          find . \
+            -type f \
             -name "*.dtb" \
             -not -path "./.git/*" \
             -print
 
           echo
           echo "========================================"
-          echo "KERNEL MODULES"
+          echo "ZIP"
           echo "========================================"
 
-          find . -type f \
-            -name "*.ko" \
-            -not -path "./.git/*" \
-            -print
-
-          echo
-          echo "========================================"
-          echo "ZIP FILES"
-          echo "========================================"
-
-          find . -type f \
+          find . \
+            -type f \
             -name "*.zip" \
             -not -path "./.git/*" \
             -print
 
-          echo
-          echo "========================================"
-          echo "CCACHE STATISTICS"
-          echo "========================================"
-
-          ccache -s || true
-
-      # ============================================================
-      # 12. Verify kernel image
-      # ============================================================
-
-      - name: Verify kernel image
+      - name: Verify kernel
         if: success()
         run: |
-          echo "========================================"
-          echo "VERIFYING KERNEL IMAGE"
-          echo "========================================"
-
           IMAGE="out/arch/arm64/boot/Image.gz"
 
           if [ ! -f "$IMAGE" ]; then
             echo "ERROR: Image.gz not found!"
-            echo
-            echo "Expected:"
-            echo "$IMAGE"
-            echo
-            echo "Actual boot directory:"
-            find out/arch/arm64/boot -maxdepth 2 -type f -print 2>/dev/null || true
             exit 1
           fi
 
-          echo "Kernel image found:"
+          echo "Kernel image:"
           ls -lh "$IMAGE"
 
           file "$IMAGE"
 
-      # ============================================================
-      # 13. Collect AnyKernel3 ZIP
-      # ============================================================
-
-      - name: Collect AnyKernel package
+      - name: Collect kernel ZIP
         if: success()
         run: |
           set -e
 
           mkdir -p artifacts
-
-          echo "========================================"
-          echo "SEARCHING FOR AQUAKERNEL ZIP"
-          echo "========================================"
 
           ZIP_FILE=$(find . \
             -type f \
@@ -417,47 +235,27 @@ jobs:
             | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-
             echo "ERROR: AquaKernel ZIP not found!"
 
             echo
-            echo "========================================"
-            echo "ALL ZIP FILES"
-            echo "========================================"
-
+            echo "All ZIP files:"
             find . \
               -type f \
               -name "*.zip" \
               -not -path "./.git/*" \
               -print
 
-            echo
-            echo "========================================"
-            echo "ROOT DIRECTORY"
-            echo "========================================"
-
-            ls -lah
-
             exit 1
           fi
 
-          echo "Kernel ZIP found:"
+          echo "Found:"
           echo "$ZIP_FILE"
 
           cp "$ZIP_FILE" artifacts/
 
-          echo
-          echo "========================================"
-          echo "ARTIFACT"
-          echo "========================================"
-
           ls -lh artifacts/
 
-      # ============================================================
-      # 14. Upload kernel ZIP
-      # ============================================================
-
-      - name: Upload kernel ZIP
+      - name: Upload kernel
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -465,10 +263,6 @@ jobs:
           path: artifacts/AquaKernel-*.zip
           if-no-files-found: error
           retention-days: 14
-
-      # ============================================================
-      # 15. Upload build log
-      # ============================================================
 
       - name: Upload build log
         if: always()
