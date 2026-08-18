@@ -3,7 +3,7 @@
 set -o pipefail
 
 SECONDS=0
-DATE=$(date '+%Y%m%d-%H%M')
+DATE="$(date '+%Y%m%d-%H%M')"
 
 CURRENT_DIR="$(pwd)"
 
@@ -61,12 +61,15 @@ echo
 echo "========================================"
 echo "Aqua / evergey Kernel Build"
 echo "========================================"
+
+echo "Kernel       : Linux 4.14"
 echo "Device       : $DEVICE"
 echo "Defconfig    : $DEFCONFIG"
 echo "Build jobs   : $BUILD_JOBS"
 echo "KernelSU     : $INCLUDE_KSU"
 echo "Output       : out"
 echo "ZIP          : $ZIPNAME"
+
 echo "========================================"
 
 # ============================================================
@@ -121,7 +124,7 @@ echo "Found:"
 ls -lh "arch/arm64/configs/$DEFCONFIG"
 
 # ============================================================
-# Download / prepare toolchain
+# Prepare ZyCromerZ Clang 22
 # ============================================================
 
 echo
@@ -132,7 +135,7 @@ echo "========================================"
 if [ ! -x "$TC_DIR/bin/clang" ]; then
 
     echo "Clang 22 not found."
-    echo "Downloading toolchain..."
+    echo "Downloading..."
 
     mkdir -p "$TC_DIR"
 
@@ -163,24 +166,29 @@ fi
 export PATH="$TC_DIR/bin:$PATH"
 
 # ============================================================
-# Compiler environment
+# Kernel build environment
 # ============================================================
 
 export ARCH=arm64
 export SUBARCH=arm64
 
-export CC=clang
-export LD=ld.lld
-
-# HOST tools must use native x86_64 compiler
-export HOSTCC=gcc
-export HOSTCXX=g++
-
 export LLVM=1
 export LLVM_IAS=1
 
+export CC=clang
+export LD=ld.lld
+
+# IMPORTANT:
+# This old Android 4.14 Kbuild uses CLANG_TRIPLE / CROSS_COMPILE
+# to establish the AArch64 target for Clang.
+export CLANG_TRIPLE=aarch64-linux-gnu-
+export CROSS_COMPILE=aarch64-linux-gnu-
+
+# Do not force HOSTCC/HOSTCXX here.
+# The kernel's own Makefile selects them when LLVM=1.
+
 # ============================================================
-# Show compiler
+# Compiler information
 # ============================================================
 
 echo
@@ -193,19 +201,66 @@ command -v clang
 clang --version
 
 echo
+echo "clang target:"
+clang -print-target-triple
+
+echo
 echo "ld.lld:"
 command -v ld.lld
 ld.lld --version
 
 echo
-echo "gcc:"
-command -v gcc
-gcc --version | head -1
+echo "llvm-ar:"
+command -v llvm-ar
+llvm-ar --version | head -1
 
 echo
-echo "g++:"
-command -v g++
-g++ --version | head -1
+echo "llvm-nm:"
+command -v llvm-nm
+
+echo
+echo "llvm-objcopy:"
+command -v llvm-objcopy
+
+echo
+echo "Configured target:"
+echo "$CLANG_TRIPLE"
+
+echo
+echo "CROSS_COMPILE:"
+echo "$CROSS_COMPILE"
+
+# ============================================================
+# Check target triple explicitly
+# ============================================================
+
+echo
+echo "========================================"
+echo "Testing AArch64 Clang target"
+echo "========================================"
+
+cat > /tmp/test_arm64.c <<'EOF'
+int test_function(void)
+{
+    return 0;
+}
+EOF
+
+clang \
+    --target=aarch64-linux-gnu \
+    -c \
+    /tmp/test_arm64.c \
+    -o /tmp/test_arm64.o
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Clang cannot compile for AArch64."
+    exit 1
+fi
+
+file /tmp/test_arm64.o
+
+rm -f /tmp/test_arm64.c
+rm -f /tmp/test_arm64.o
 
 # ============================================================
 # KernelSU Next + SUSFS
@@ -244,6 +299,7 @@ if [[ "$INCLUDE_KSU" = true && ! -f out/.ksu_applied ]]; then
 
     for patch in SU_patch/Patches/*sh; do
         if [ -f "$patch" ]; then
+
             echo
             echo "Applying patch script:"
             echo "$patch"
@@ -334,8 +390,10 @@ echo "========================================"
 make \
     O=out \
     ARCH=arm64 \
-    HOSTCC=gcc \
-    HOSTCXX=g++ \
+    CROSS_COMPILE=aarch64-linux-gnu- \
+    CLANG_TRIPLE=aarch64-linux-gnu- \
+    LLVM=1 \
+    LLVM_IAS=1 \
     "$DEFCONFIG"
 
 DEFCONFIG_RESULT=$?
@@ -346,16 +404,13 @@ if [ $DEFCONFIG_RESULT -ne 0 ]; then
 fi
 
 # ============================================================
-# Compiler compatibility
+# Clang 22 / old-kernel compatibility
 # ============================================================
 
 echo
 echo "========================================"
 echo "Adjusting compiler compatibility"
 echo "========================================"
-
-# Linux 4.14's old compiler test can reject modern Clang.
-# Disable the old strong stack protector option.
 
 if grep -q '^CONFIG_CC_STACKPROTECTOR_STRONG=y' out/.config; then
 
@@ -369,8 +424,10 @@ fi
 make \
     O=out \
     ARCH=arm64 \
-    HOSTCC=gcc \
-    HOSTCXX=g++ \
+    CROSS_COMPILE=aarch64-linux-gnu- \
+    CLANG_TRIPLE=aarch64-linux-gnu- \
+    LLVM=1 \
+    LLVM_IAS=1 \
     olddefconfig
 
 OLDDEFCONFIG_RESULT=$?
@@ -386,23 +443,23 @@ echo "Stack protector configuration:"
 grep "CONFIG_CC_STACKPROTECTOR" out/.config || true
 
 # ============================================================
-# Build configuration summary
+# Build command diagnostic
 # ============================================================
 
 echo
 echo "========================================"
-echo "Final build configuration"
+echo "Build environment"
 echo "========================================"
 
-echo "ARCH       = $ARCH"
-echo "SUBARCH    = $SUBARCH"
-echo "CC         = $CC"
-echo "HOSTCC     = $HOSTCC"
-echo "HOSTCXX    = $HOSTCXX"
-echo "LD         = $LD"
-echo "LLVM       = $LLVM"
-echo "LLVM_IAS   = $LLVM_IAS"
-echo "BUILD_JOBS = $BUILD_JOBS"
+echo "ARCH          = $ARCH"
+echo "SUBARCH       = $SUBARCH"
+echo "CC            = $CC"
+echo "LD            = $LD"
+echo "LLVM          = $LLVM"
+echo "LLVM_IAS      = $LLVM_IAS"
+echo "CLANG_TRIPLE  = $CLANG_TRIPLE"
+echo "CROSS_COMPILE = $CROSS_COMPILE"
+echo "BUILD_JOBS    = $BUILD_JOBS"
 
 # ============================================================
 # Kernel compilation
@@ -422,8 +479,8 @@ make \
     O=out \
     ARCH=arm64 \
     CC=clang \
-    HOSTCC=gcc \
-    HOSTCXX=g++ \
+    CLANG_TRIPLE=aarch64-linux-gnu- \
+    CROSS_COMPILE=aarch64-linux-gnu- \
     LLVM=1 \
     LLVM_IAS=1 \
     KCFLAGS="-Wno-error=default-const-init-var-unsafe" \
@@ -442,11 +499,21 @@ if [ $BUILD_RESULT -ne 0 ]; then
     echo "Exit code: $BUILD_RESULT"
 
     echo
-    echo "Last generated files:"
-    find out/arch/arm64/boot \
-        -maxdepth 2 \
-        -type f \
-        -print 2>/dev/null || true
+    echo "For diagnostic purposes, print the exact command"
+    echo "for scripts/mod/empty.o with V=1..."
+
+    make \
+        -j1 \
+        O=out \
+        ARCH=arm64 \
+        CC=clang \
+        CLANG_TRIPLE=aarch64-linux-gnu- \
+        CROSS_COMPILE=aarch64-linux-gnu- \
+        LLVM=1 \
+        LLVM_IAS=1 \
+        V=1 \
+        scripts/mod/empty.o \
+        || true
 
     exit $BUILD_RESULT
 fi
@@ -463,7 +530,7 @@ echo "Checking kernel image"
 echo "========================================"
 
 if [ ! -f "$IMAGE" ]; then
-    echo "ERROR: Image.gz was not generated!"
+    echo "ERROR: Image.gz was not generated."
     exit 1
 fi
 
@@ -512,7 +579,7 @@ fi
 cp "$IMAGE" AnyKernel3/Image.gz
 
 if [ ! -f AnyKernel3/Image.gz ]; then
-    echo "ERROR: Failed to copy Image.gz to AnyKernel3."
+    echo "ERROR: Failed to copy Image.gz."
     exit 1
 fi
 
@@ -548,9 +615,8 @@ if [ ! -f "$ZIPNAME" ]; then
     exit 1
 fi
 
-ZIP_SIZE=$(du -h "$ZIPNAME" | cut -f1)
+ZIP_SIZE="$(du -h "$ZIPNAME" | cut -f1)"
 
-echo "ZIP:"
 ls -lh "$ZIPNAME"
 
 echo
