@@ -37,10 +37,15 @@ jobs:
       SUBARCH: arm64
       LLVM: 1
       LLVM_IAS: 1
+
       KBUILD_BUILD_USER: github-actions
       KBUILD_BUILD_HOST: github-actions
 
     steps:
+
+      # ============================================================
+      # 1. Checkout
+      # ============================================================
 
       - name: Checkout source
         uses: actions/checkout@v4
@@ -49,14 +54,9 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo apt-get clean
-
-          df -h
+      # ============================================================
+      # 2. Install dependencies
+      # ============================================================
 
       - name: Install dependencies
         run: |
@@ -79,58 +79,113 @@ jobs:
             xz-utils \
             zip
 
+      # ============================================================
+      # 3. Show runner information
+      # ============================================================
+
       - name: Show build environment
         run: |
-          echo "===== CPU ====="
+          echo "========================================"
+          echo "CPU"
+          echo "========================================"
+
           nproc
           lscpu
 
           echo
-          echo "===== MEMORY ====="
+          echo "========================================"
+          echo "MEMORY"
+          echo "========================================"
+
           free -h
 
           echo
-          echo "===== DISK ====="
+          echo "========================================"
+          echo "DISK"
+          echo "========================================"
+
           df -h
 
           echo
-          echo "===== GIT ====="
+          echo "========================================"
+          echo "GIT"
+          echo "========================================"
+
+          git branch --show-current
           git rev-parse HEAD
 
           echo
-          echo "===== KERNEL ====="
+          echo "========================================"
+          echo "KERNEL VERSION"
+          echo "========================================"
+
           make kernelversion
+
+      # ============================================================
+      # 4. Check source
+      # ============================================================
 
       - name: Check source
         run: |
-          if [ ! -f arch/arm64/configs/everpal_defconfig ]; then
-            echo "ERROR: everpal_defconfig not found!"
+          echo "========================================"
+          echo "Checking source tree"
+          echo "========================================"
+
+          if [ ! -f "build.sh" ]; then
+            echo "ERROR: build.sh not found!"
             exit 1
           fi
 
-          if [ ! -f build.sh ]; then
-            echo "ERROR: build.sh not found!"
+          if [ ! -f "arch/arm64/configs/everpal_defconfig" ]; then
+            echo "ERROR: everpal_defconfig not found!"
             exit 1
           fi
 
           chmod +x build.sh
 
-          echo "everpal_defconfig:"
-          ls -lh arch/arm64/configs/everpal_defconfig
-
           echo
           echo "build.sh:"
           ls -lh build.sh
 
-      - name: Prepare build environment
+          echo
+          echo "everpal_defconfig:"
+          ls -lh arch/arm64/configs/everpal_defconfig
+
+      # ============================================================
+      # 5. Show build configuration
+      # ============================================================
+
+      - name: Show workflow configuration
+        run: |
+          echo "========================================"
+          echo "Workflow configuration"
+          echo "========================================"
+
+          echo "ARCH       = $ARCH"
+          echo "SUBARCH    = $SUBARCH"
+          echo "LLVM       = $LLVM"
+          echo "LLVM_IAS   = $LLVM_IAS"
+
+          echo
+          echo "KernelSU:"
+          echo "${{ github.event.inputs.with_ksu || 'false' }}"
+
+          echo
+          echo "Build jobs:"
+          echo "${{ github.event.inputs.jobs || '2' }}"
+
+      # ============================================================
+      # 6. Prepare directories
+      # ============================================================
+
+      - name: Prepare build directories
         run: |
           mkdir -p out
           mkdir -p artifacts
 
-          echo "ARCH=$ARCH"
-          echo "SUBARCH=$SUBARCH"
-          echo "LLVM=$LLVM"
-          echo "LLVM_IAS=$LLVM_IAS"
+      # ============================================================
+      # 7. Build kernel
+      # ============================================================
 
       - name: Build kernel
         env:
@@ -141,7 +196,7 @@ jobs:
           set -o pipefail
 
           echo "========================================"
-          echo "BUILD CONFIGURATION"
+          echo "BUILD START"
           echo "========================================"
 
           echo "BUILD_JOBS=$BUILD_JOBS"
@@ -149,38 +204,53 @@ jobs:
 
           echo
           echo "========================================"
-          echo "START BUILD"
-          echo "========================================"
 
           if [ "$WITH_KSU" = "true" ]; then
+
+            echo "KernelSU Next + SUSFS: ENABLED"
+
             ./build.sh --with-ksu 2>&1 | tee build.log
+
           else
+
+            echo "KernelSU Next + SUSFS: DISABLED"
+
             ./build.sh 2>&1 | tee build.log
+
           fi
 
-      - name: Show build result
+      # ============================================================
+      # 8. Build diagnostics
+      # ============================================================
+
+      - name: Build diagnostics
         if: always()
         run: |
           echo "========================================"
-          echo "LAST 300 LINES"
+          echo "BUILD LOG - LAST 300 LINES"
           echo "========================================"
 
           if [ -f build.log ]; then
             tail -300 build.log
+          else
+            echo "build.log not found."
           fi
 
           echo
           echo "========================================"
-          echo "IMAGE"
+          echo "KERNEL IMAGES"
           echo "========================================"
 
-          find . -type f \
+          find . \
+            -type f \
             \( \
               -name "Image" \
               -o -name "Image.gz" \
               -o -name "Image.gz-dtb" \
+              -o -name "Image-dtb" \
             \) \
             -not -path "./.git/*" \
+            -not -path "./artifacts/*" \
             -print
 
           echo
@@ -192,40 +262,78 @@ jobs:
             -type f \
             -name "*.dtb" \
             -not -path "./.git/*" \
+            -not -path "./artifacts/*" \
             -print
 
           echo
           echo "========================================"
-          echo "ZIP"
+          echo "KO MODULES"
+          echo "========================================"
+
+          find . \
+            -type f \
+            -name "*.ko" \
+            -not -path "./.git/*" \
+            -not -path "./artifacts/*" \
+            -print
+
+          echo
+          echo "========================================"
+          echo "ZIP FILES"
           echo "========================================"
 
           find . \
             -type f \
             -name "*.zip" \
             -not -path "./.git/*" \
+            -not -path "./artifacts/*" \
             -print
 
-      - name: Verify kernel
+          echo
+          echo "========================================"
+          echo "DISK"
+          echo "========================================"
+
+          df -h
+
+      # ============================================================
+      # 9. Verify kernel image
+      # ============================================================
+
+      - name: Verify kernel image
         if: success()
         run: |
           IMAGE="out/arch/arm64/boot/Image.gz"
+
+          echo "========================================"
+          echo "VERIFY KERNEL"
+          echo "========================================"
 
           if [ ! -f "$IMAGE" ]; then
             echo "ERROR: Image.gz not found!"
             exit 1
           fi
 
-          echo "Kernel image:"
+          echo "Kernel:"
           ls -lh "$IMAGE"
 
+          echo
           file "$IMAGE"
 
-      - name: Collect kernel ZIP
+      # ============================================================
+      # 10. Collect AnyKernel ZIP
+      # ============================================================
+
+      - name: Collect AnyKernel ZIP
         if: success()
         run: |
           set -e
 
           mkdir -p artifacts
+
+          echo "========================================"
+          echo "SEARCHING FOR KERNEL ZIP"
+          echo "========================================"
 
           ZIP_FILE=$(find . \
             -type f \
@@ -235,6 +343,7 @@ jobs:
             | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
+
             echo "ERROR: AquaKernel ZIP not found!"
 
             echo
@@ -245,6 +354,10 @@ jobs:
               -not -path "./.git/*" \
               -print
 
+            echo
+            echo "Repository root:"
+            ls -lah
+
             exit 1
           fi
 
@@ -253,9 +366,15 @@ jobs:
 
           cp "$ZIP_FILE" artifacts/
 
+          echo
+          echo "Artifact:"
           ls -lh artifacts/
 
-      - name: Upload kernel
+      # ============================================================
+      # 11. Upload kernel
+      # ============================================================
+
+      - name: Upload kernel ZIP
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -263,6 +382,10 @@ jobs:
           path: artifacts/AquaKernel-*.zip
           if-no-files-found: error
           retention-days: 14
+
+      # ============================================================
+      # 12. Upload build log
+      # ============================================================
 
       - name: Upload build log
         if: always()
