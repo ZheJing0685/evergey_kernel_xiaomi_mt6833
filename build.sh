@@ -92,15 +92,15 @@ make O=out ARCH=arm64 "$DEFCONFIG"
 
 echo -e "\nStarting compilation...\n"
 
+BUILD_JOBS="${BUILD_JOBS:-2}"
+
 if \
-	make -j$(nproc --all) O=out \
+	make -j"${BUILD_JOBS}" O=out \
 	ARCH=arm64 \
 	CC="ccache clang" \
 	LLVM=1 \
 	LLVM_IAS=1 \
-	CROSS_COMPILE=aarch64-linux-gnu- \
-	CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-        KCFLAGS="-Wno-error=default-const-init-var-unsafe" \
+	KCFLAGS="-Wno-error=default-const-init-var-unsafe" \
 	Image.gz dtbs; \
 	then
 
